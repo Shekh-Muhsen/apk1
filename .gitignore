@@ -1,0 +1,9 @@
+# Android build outputs
+android-build/.gradle/
+android-build/build/
+android-build/app/build/
+android-build/local.properties
+android-build/*.keystore
+
+# Node
+node_modules/

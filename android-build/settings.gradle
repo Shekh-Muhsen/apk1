@@ -1,0 +1,2 @@
+rootProject.name = "OceanAdventure"
+include ':app'
