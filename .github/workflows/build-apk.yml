@@ -24,6 +24,7 @@ jobs:
 
       - name: Copy game HTML into assets
         run: |
+          mkdir -p android-build/app/src/main/assets
           cp ocean-adventure-yacht.html android-build/app/src/main/assets/game.html
 
       - name: Generate Gradle Wrapper
