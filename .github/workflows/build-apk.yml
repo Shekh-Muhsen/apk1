@@ -22,6 +22,12 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install Gradle 8.4
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.4-bin.zip -O /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /opt/gradle
+          echo "/opt/gradle/gradle-8.4/bin" >> $GITHUB_PATH
+
       - name: Copy game HTML into assets
         run: |
           mkdir -p android-build/app/src/main/assets
@@ -31,18 +37,16 @@ jobs:
         run: |
           cd android-build
           gradle wrapper --gradle-version=8.4 --distribution-type=bin
+          chmod +x gradlew
 
-      - name: Make gradlew executable
-        run: chmod +x android-build/gradlew
-
-      - name: Generate release keystore (self-signed)
+      - name: Generate release keystore
         run: |
           keytool -genkeypair -v \
             -keystore android-build/app/release.keystore \
             -alias oceanadventure \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -storepass oceanadv2024 \
-            -keypass  oceanadv2024 \
+            -keypass oceanadv2024 \
             -dname "CN=Ocean Adventure, OU=Games, O=OceanAdv, L=Dhaka, ST=Dhaka, C=BD"
 
       - name: Build Release APK
@@ -53,16 +57,16 @@ jobs:
           KEY_PASSWORD: oceanadv2024
         run: |
           cd android-build
-          ./gradlew assembleRelease
+          ./gradlew assembleRelease --no-daemon --stacktrace
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: OceanAdventure-release
+          name: OceanAdventure-APK
           path: android-build/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
 
-      - name: Build AAB (for Play Store)
+      - name: Build AAB for Play Store
         env:
           KEYSTORE_PATH: release.keystore
           KEYSTORE_PASSWORD: oceanadv2024
@@ -70,11 +74,11 @@ jobs:
           KEY_PASSWORD: oceanadv2024
         run: |
           cd android-build
-          ./gradlew bundleRelease
+          ./gradlew bundleRelease --no-daemon
 
-      - name: Upload AAB artifact (Play Store)
+      - name: Upload AAB (Play Store)
         uses: actions/upload-artifact@v4
         with:
-          name: OceanAdventure-playstore-aab
+          name: OceanAdventure-PlayStore-AAB
           path: android-build/app/build/outputs/bundle/release/app-release.aab
           retention-days: 30
