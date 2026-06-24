@@ -3176,12 +3176,13 @@ function applyAutoJet(dt){
   const R1='2%',R2='54%'; // top-row top%, bottom-row top%
 
   function buildYacht(){
-    // Left column: steer up (top), fwd+back (bottom row side by side)
-    yachtBtns.push(kBtnT('⬆️<br><small>STEER</small>','KeyW',   '2%',R1,'20vw','44%','18px'));
-    yachtBtns.push(kBtnT('⛵<br><small>FWD</small>',   'KeyD',   '2%',R2,'20vw','44%','18px'));
-    yachtBtns.push(kBtnT('🔙<br><small>BACK</small>',  'KeyA',  '24%',R2,'20vw','44%','18px'));
+    // Left 2×2: steer up/down | throttle fwd/rev
+    yachtBtns.push(kBtnT('▲<br><small>LEAN</small>',  'KeyW', '2%', R1,'20vw','44%','18px'));
+    yachtBtns.push(kBtnT('▼<br><small>LEAN</small>',  'KeyS', '2%', R2,'20vw','44%','18px'));
+    yachtBtns.push(kBtnT('⛵<br><small>FWD</small>',  'KeyD','24%', R1,'20vw','44%','18px'));
+    yachtBtns.push(kBtnT('🔙<br><small>REV</small>',  'KeyA','24%', R2,'20vw','44%','18px'));
     // Right: boost top, auto-sail bottom
-    yachtBtns.push(kBtnT('💨','ShiftLeft','78%',R1,'19vw','44%','22px'));
+    yachtBtns.push(kBtnT('💨<br><small>BOOST</small>','ShiftLeft','78%',R1,'19vw','44%','16px'));
     yachtBtns.push(tBtnT('⚓<br>AUTO','78%',R2,'19vw','44%',v=>{autoSail=v;if(!v)autoCruise=false;},'12px'));
   }
 
