@@ -28,6 +28,16 @@ jobs:
           unzip -q /tmp/gradle.zip -d /opt/gradle
           echo "/opt/gradle/gradle-8.4/bin" >> $GITHUB_PATH
 
+      - name: Inject build version into HTML and build.gradle
+        run: |
+          BUILD_NUM=${{ github.run_number }}
+          BUILD_DATE=$(date -u +"%Y%m%d")
+          VERSION_NAME="1.${BUILD_NUM}"
+          echo "versionCode=${BUILD_NUM}, versionName=${VERSION_NAME}"
+          sed -i "s/__BUILD_VERSION__/${VERSION_NAME}/g" ocean-adventure-yacht.html
+          sed -i "s/versionCode 1/versionCode ${BUILD_NUM}/" android-build/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"${VERSION_NAME}\"/" android-build/app/build.gradle
+
       - name: Copy game HTML into assets
         run: |
           mkdir -p android-build/app/src/main/assets
