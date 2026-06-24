@@ -126,6 +126,15 @@
     <button id="start-btn" onclick="startGame()">Set Sail</button>
   </div>
 
+  <!-- Back / Pause overlay (shown during gameplay, outside title-screen) -->
+  <button id="game-back-btn" onclick="goBack()" style="display:none;position:fixed;top:10px;left:10px;z-index:500;background:rgba(10,20,50,0.82);border:1px solid rgba(100,160,220,0.55);border-radius:8px;color:#7ec8e3;font-size:12px;letter-spacing:1px;padding:6px 14px;cursor:pointer;touch-action:none;">◀ BACK</button>
+  <button id="game-pause-btn" onclick="togglePause()" style="display:none;position:fixed;top:10px;right:10px;z-index:500;background:rgba(10,20,50,0.82);border:1px solid rgba(100,160,220,0.55);border-radius:8px;color:#7ec8e3;font-size:16px;padding:4px 12px;cursor:pointer;touch-action:none;">⏸</button>
+  <div id="pause-overlay" style="display:none;position:fixed;inset:0;z-index:400;background:rgba(0,8,24,0.82);flex-direction:column;align-items:center;justify-content:center;gap:18px;">
+    <div style="color:#7ec8e3;font-size:36px;letter-spacing:6px;font-weight:200;margin-bottom:10px;">PAUSED</div>
+    <button onclick="togglePause()" style="background:rgba(30,80,160,0.5);border:1px solid rgba(80,160,255,0.6);border-radius:10px;color:#fff;font-size:16px;letter-spacing:2px;padding:12px 40px;cursor:pointer;">▶  RESUME</button>
+    <button onclick="goBack()" style="background:rgba(10,20,50,0.5);border:1px solid rgba(100,160,220,0.4);border-radius:10px;color:#7ec8e3;font-size:14px;letter-spacing:2px;padding:10px 36px;cursor:pointer;">◀  BACK TO MENU</button>
+  </div>
+
   <div id="hud" style="display:none;">
     <div id="status-panel">
       <div class="stat-row"><div class="stat-name">Hull</div><div class="stat-bar-wrap"><div class="stat-bar" id="bar-hull" style="width:100%;background:#2ecc71;"></div></div><div class="stat-val" id="val-hull">100%</div></div>
@@ -232,6 +241,7 @@ const HULLS = {
       ctx.fillStyle=`rgba(${8+i*3},${30+i*8},${60+i*10},${0.4-i*0.04})`; ctx.fill();
     });
   }
+  window._restartTitleAnim = function(){ requestAnimationFrame(drawTitle); };
   drawTitle();
 })();
 
@@ -251,6 +261,8 @@ function selectMode(mode){
 function startGame(){
   document.getElementById('title-screen').style.display='none';
   gameRunning = true;
+  document.getElementById('game-back-btn').style.display='block';
+  document.getElementById('game-pause-btn').style.display=(gameMode!=='yacht')?'block':'none';
   if(gameMode==='jet'){
     document.getElementById('hud').style.display='none';
     initJetGame();
@@ -262,6 +274,33 @@ function startGame(){
     yachtType = selectedYacht;
     initGame();
   }
+}
+
+function goBack(){
+  tdPaused=false;
+  gameRunning=false;
+  Music.stop&&Music.stop();
+  document.getElementById('pause-overlay').style.display='none';
+  document.getElementById('game-back-btn').style.display='none';
+  document.getElementById('game-pause-btn').style.display='none';
+  const md=document.getElementById('td-map');
+  if(md) md.style.display='none';
+  document.getElementById('game-canvas').style.background='';
+  document.getElementById('hud').style.display='none';
+  document.getElementById('title-screen').style.display='flex';
+  Object.keys(keys).forEach(k=>keys[k]=false);
+  if(window._restartTitleAnim) window._restartTitleAnim();
+  // hide touch pad
+  const pad=document.querySelector('[data-touchpad]');
+  if(pad) pad.style.display='none';
+}
+let tdPaused=false;
+function togglePause(){
+  if(!gameRunning) return;
+  tdPaused=!tdPaused;
+  const ov=document.getElementById('pause-overlay');
+  ov.style.display=tdPaused?'flex':'none';
+  document.getElementById('game-pause-btn').textContent=tdPaused?'▶':'⏸';
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -687,8 +726,9 @@ function handleHotkey(code){
     if(code==='KeyR' && jetState.health<=0) initJetGame();
     return;
   }
+  if(code==='Escape'){ togglePause(); return; }
   if(gameMode==='topdown'){
-    if(code==='KeyR' && tdPlayer.health<=0) initTopdownGame();
+    if(code==='KeyR' && (tdPlayer.health<=0||tdPaused)) { tdPaused=false; initTopdownGame(); }
     if(code==='KeyG') tdPlayer.gear=!tdPlayer.gear;
     return;
   }
@@ -2457,6 +2497,14 @@ const TD_AIRPORTS = [
 ];
 
 let tdEnemies=[], tdBullets=[], tdMissiles2=[], tdBlasts=[];
+let tdSAMs=[], tdSAMmissiles=[], tdAirBlasts=[], tdGroundBlasts=[];
+let tdLockAnim=0;
+
+const TD_SAM_SITES=[
+  {lat:23.97,lng:90.38},{lat:23.80,lng:90.50},{lat:23.74,lng:90.29},
+  {lat:22.32,lng:91.86},{lat:24.06,lng:90.53},{lat:23.61,lng:90.20},
+  {lat:23.88,lng:90.34},{lat:24.15,lng:90.42},
+];
 
 function knotsToLat(kn){ return kn*4.63e-6; }
 function knotsToLng(kn,lat){ return kn*4.63e-6/Math.cos(lat*Math.PI/180); }
@@ -2471,7 +2519,30 @@ function tdToScreen(lat,lng){
   return {x:p.x,y:p.y};
 }
 
+function spawnAirBlast(lat,lng){
+  const pts=[];
+  for(let i=0;i<26;i++){
+    const a=Math.random()*6.283,sp=0.003+Math.random()*0.01;
+    pts.push({lat,lng,dlat:Math.cos(a)*sp,dlng:Math.sin(a)*sp,
+      r:4+Math.random()*12,life:0.7+Math.random()*1.4,max:2.1,smoke:i>15,ring:i<4});
+  }
+  tdAirBlasts.push({lat,lng,r:0,rsp:95,life:2.1,max:2.1,pts});
+}
+function spawnGroundBlast(lat,lng){
+  const pts=[];
+  for(let i=0;i<20;i++){
+    const a=Math.random()*6.283,sp=0.0008+Math.random()*0.004;
+    pts.push({lat,lng,dlat:Math.cos(a)*sp*0.45,dlng:Math.sin(a)*sp,
+      r:2+Math.random()*8,life:0.6+Math.random()*1.4,max:2.0,smoke:i>10});
+  }
+  tdGroundBlasts.push({lat,lng,r:0,rsp:75,life:2.0,max:2.0,pts,delay:0});
+  // small secondary after 400ms
+  tdGroundBlasts.push({lat:lat+(Math.random()-0.5)*0.002,lng:lng+(Math.random()-0.5)*0.002,
+    r:0,rsp:50,life:1.4,max:1.4,pts:[],delay:0.4});
+}
+
 function updateTopdown(dt){
+  if(tdPaused) return;
   tdTime2+=dt;
   if(tdPlayer.landed){ tdPlayer.landTimer-=dt; if(tdPlayer.landTimer<=0){tdPlayer.landed=false;} return; }
 
@@ -2512,10 +2583,10 @@ function updateTopdown(dt){
     }
     tdPlayer.fireTimer=0.07;
   }
-  // ── Fire missile — auto-target nearest enemy, no manual lock needed ──
+  // ── Fire missile — target locked enemy or nearest SAM ──
   tdPlayer.missileTimer=Math.max(0,tdPlayer.missileTimer-dt);
   if(keys['KeyE']&&tdPlayer.missileTimer<=0&&tdPlayer.missiles>0&&tdPlayer.health>0){
-    const tgt=tdPlayer.locked || tdEnemies.find(e=>e.alive);
+    const tgt=tdPlayer.locked||tdEnemies.find(e=>e.alive)||tdSAMs.find(s=>s.alive);
     if(tgt){ tdMissiles2.push({lat:tdPlayer.lat,lng:tdPlayer.lng,dlat:0,dlng:0,tgt,life:10,trail:[]}); tdPlayer.missiles--; tdPlayer.missileTimer=0.55; }
   }
 
@@ -2529,15 +2600,22 @@ function updateTopdown(dt){
       for(const e of tdEnemies){
         if(!e.alive)continue;
         if(tdDist({lat:b.lat,lng:b.lng},{lat:e.lat,lng:e.lng})<0.45){
-          e.health--; if(e.health<=0){e.alive=false;tdBlasts.push({lat:e.lat,lng:e.lng,r:0,life:1.4});tdScore+=300;}
+          e.health--; if(e.health<=0){e.alive=false;spawnAirBlast(e.lat,e.lng);tdScore+=300;if(tdPlayer.locked===e)tdPlayer.locked=null;}
           hit=true; break;
         }
       }
+      if(!hit){for(const s of tdSAMs){
+        if(!s.alive)continue;
+        if(tdDist({lat:b.lat,lng:b.lng},{lat:s.lat,lng:s.lng})<0.35){
+          s.health--; if(s.health<=0){s.alive=false;spawnGroundBlast(s.lat,s.lng);tdScore+=200;if(tdPlayer.locked===s)tdPlayer.locked=null;}
+          hit=true; break;
+        }
+      }}
       if(hit){tdBullets.splice(i,1);}
     } else {
       if(tdDist({lat:b.lat,lng:b.lng},{lat:tdPlayer.lat,lng:tdPlayer.lng})<0.3){
         tdPlayer.health=Math.max(0,tdPlayer.health-10);
-        tdBlasts.push({lat:b.lat,lng:b.lng,r:0,life:0.6});
+        spawnAirBlast(tdPlayer.lat,tdPlayer.lng);
         tdBullets.splice(i,1);
       }
     }
@@ -2550,7 +2628,12 @@ function updateTopdown(dt){
     if(m.life<=0||!m.tgt||!m.tgt.alive){tdMissiles2.splice(i,1);continue;}
     const dist=tdDist({lat:m.lat,lng:m.lng},{lat:m.tgt.lat,lng:m.tgt.lng});
     if(dist<0.8){
-      m.tgt.alive=false; tdBlasts.push({lat:m.tgt.lat,lng:m.tgt.lng,r:0,life:1.8}); tdScore+=500;
+      const isSAM=TD_SAM_SITES.some(s=>s===m.tgt||s.lat===m.tgt.lat);
+      if(m.tgt.alive!==false){
+        m.tgt.alive=false;
+        if(isSAM){spawnGroundBlast(m.tgt.lat,m.tgt.lng);tdScore+=400;}
+        else{spawnAirBlast(m.tgt.lat,m.tgt.lng);tdScore+=500;}
+      }
       if(tdPlayer.locked===m.tgt)tdPlayer.locked=null;
       tdMissiles2.splice(i,1); continue;
     }
@@ -2589,23 +2672,77 @@ function updateTopdown(dt){
     }
   }
 
-  // ── Lock nearest enemy ──
-  tdLockTimer-=dt;
-  if(tdLockTimer<=0){
-    let best=null,bestD=12;
-    for(const e of tdEnemies){
-      if(!e.alive)continue;
-      const d=tdDist({lat:tdPlayer.lat,lng:tdPlayer.lng},{lat:e.lat,lng:e.lng});
-      if(d<bestD){bestD=d;best=e;}
+  // ── SAM site update: radar sweep + fire SAM missiles ──
+  for(const s of tdSAMs){
+    if(!s.alive)continue;
+    s.radarAngle=(s.radarAngle+dt*1.8)%(Math.PI*2);
+    s.fireTimer-=dt;
+    const dist=tdDist({lat:s.lat,lng:s.lng},{lat:tdPlayer.lat,lng:tdPlayer.lng});
+    if(s.fireTimer<=0&&dist<20&&tdPlayer.health>0){
+      tdSAMmissiles.push({lat:s.lat,lng:s.lng,dlat:0,dlng:0,tgt:tdPlayer,life:14,trail:[]});
+      s.fireTimer=8+Math.random()*7;
+      notify('⚠ SAM LAUNCH!');
     }
-    tdPlayer.locked=best; tdLockTimer=0.4;
+  }
+  // ── SAM missile update ──
+  for(let i=tdSAMmissiles.length-1;i>=0;i--){
+    const m=tdSAMmissiles[i]; m.life-=dt;
+    if(m.life<=0){tdSAMmissiles.splice(i,1);continue;}
+    const dist=tdDist({lat:m.lat,lng:m.lng},{lat:tdPlayer.lat,lng:tdPlayer.lng});
+    if(dist<0.35){
+      tdPlayer.health=Math.max(0,tdPlayer.health-28);
+      spawnAirBlast(tdPlayer.lat,tdPlayer.lng);
+      tdSAMmissiles.splice(i,1);
+      notify('💥 SAM HIT!');
+      continue;
+    }
+    const dx=tdPlayer.lat-m.lat,dy=tdPlayer.lng-m.lng,dl=Math.sqrt(dx*dx+dy*dy);
+    const ms=0.0085*60;
+    m.dlat+=(dx/dl*ms-m.dlat)*dt*5; m.dlng+=(dy/dl*ms-m.dlng)*dt*5;
+    m.lat+=m.dlat*dt; m.lng+=m.dlng*dt;
+    m.trail.push({lat:m.lat,lng:m.lng}); if(m.trail.length>22)m.trail.shift();
   }
 
-  // ── Explosions ──
+  // ── Improved radar lock: front-arc priority, updates 4×/s ──
+  tdLockAnim+=dt;
+  tdLockTimer-=dt;
+  if(tdLockTimer<=0){
+    const hdR=tdPlayer.hdg*Math.PI/180;
+    let best=null,bestScore=Infinity;
+    for(const e of [...tdEnemies,...tdSAMs]){
+      if(!e.alive)continue;
+      const d=tdDist({lat:tdPlayer.lat,lng:tdPlayer.lng},{lat:e.lat,lng:e.lng});
+      if(d>22)continue;
+      const dx=e.lng-tdPlayer.lng,dy=e.lat-tdPlayer.lat;
+      const bearing=Math.atan2(dx,dy);
+      let angDiff=Math.abs(((bearing-hdR)*180/Math.PI+540)%360-180);
+      const score=d*(1+angDiff/60);
+      if(score<bestScore){bestScore=score;best=e;}
+    }
+    tdPlayer.locked=best; tdLockTimer=0.25;
+  }
+
+  // ── Explosions (legacy simple blasts) ──
   for(let i=tdBlasts.length-1;i>=0;i--){
     const b=tdBlasts[i];
     b.r+=dt*90; b.life-=dt;
     if(b.life<=0)tdBlasts.splice(i,1);
+  }
+  // ── Rich air blasts ──
+  for(let i=tdAirBlasts.length-1;i>=0;i--){
+    const b=tdAirBlasts[i]; b.r+=dt*b.rsp; b.life-=dt;
+    if(b.life<=0){tdAirBlasts.splice(i,1);continue;}
+    b.pts.forEach(p=>{p.lat+=p.dlat*dt;p.lng+=p.dlng*dt;p.life-=dt;});
+    b.pts=b.pts.filter(p=>p.life>0);
+  }
+  // ── Ground blasts ──
+  for(let i=tdGroundBlasts.length-1;i>=0;i--){
+    const b=tdGroundBlasts[i];
+    if(b.delay>0){b.delay-=dt;continue;}
+    b.r+=dt*b.rsp; b.life-=dt;
+    if(b.life<=0){tdGroundBlasts.splice(i,1);continue;}
+    b.pts.forEach(p=>{p.lat+=p.dlat*dt;p.lng+=p.dlng*dt;p.life-=dt;});
+    b.pts=b.pts.filter(p=>p.life>0);
   }
 
   // ── Landing check ──
@@ -2693,7 +2830,66 @@ function renderTopdown(){
     ctx.fillStyle='#e74c3c'; ctx.fillRect(8,-2.5,4,5);
     ctx.restore();
   }
-  // Explosions
+  // ── SAM sites ──
+  for(const s of tdSAMs){
+    const pt=tdToScreen(s.lat,s.lng); if(!pt)continue;
+    if(pt.x<-60||pt.x>W+60||pt.y<-60||pt.y>H+60)continue;
+    ctx.save(); ctx.translate(pt.x,pt.y);
+    if(s.alive){
+      // Base
+      ctx.fillStyle='#3a4a20'; ctx.beginPath(); ctx.arc(0,0,11,0,6.283); ctx.fill();
+      ctx.strokeStyle='rgba(150,200,80,0.55)'; ctx.lineWidth=1.5; ctx.stroke();
+      // Radar sweep arm
+      ctx.save(); ctx.rotate(s.radarAngle);
+      ctx.strokeStyle='rgba(80,255,80,0.7)'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-14); ctx.stroke();
+      // Radar sweep fan
+      ctx.fillStyle='rgba(80,255,80,0.12)';
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.arc(0,0,22,-0.5,0); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      // Launch tube indicator
+      ctx.fillStyle='#5a8020'; ctx.fillRect(-3,-14,6,14);
+      ctx.fillStyle='rgba(255,100,0,0.85)'; ctx.beginPath(); ctx.arc(0,-14,3,0,6.283); ctx.fill();
+      // Health pips
+      for(let h=0;h<s.health;h++){
+        ctx.beginPath(); ctx.arc(-4+h*4,18,2.5,0,6.283);
+        ctx.fillStyle='#2ecc71'; ctx.fill();
+      }
+    }
+    ctx.restore();
+    if(s===tdPlayer.locked&&s.alive){ drawLockBracket(pt.x,pt.y,22,'SAM'); }
+    ctx.save(); ctx.translate(pt.x,pt.y);
+    if(!s.alive){
+      // Destroyed wreckage
+      ctx.globalAlpha=0.45;
+      ctx.fillStyle='#2a1a0a'; ctx.beginPath(); ctx.arc(0,0,9,0,6.283); ctx.fill();
+      ctx.strokeStyle='#6a4a2a'; ctx.lineWidth=1; ctx.stroke();
+      ctx.globalAlpha=1;
+    }
+    ctx.restore();
+  }
+
+  // ── SAM missiles ──
+  for(const m of tdSAMmissiles){
+    if(m.trail.length>1){
+      ctx.beginPath();
+      for(let i=0;i<m.trail.length;i++){
+        const tp=tdToScreen(m.trail[i].lat,m.trail[i].lng); if(!tp)continue;
+        i===0?ctx.moveTo(tp.x,tp.y):ctx.lineTo(tp.x,tp.y);
+      }
+      ctx.strokeStyle='rgba(255,80,20,0.55)'; ctx.lineWidth=2; ctx.stroke();
+    }
+    const mp=tdToScreen(m.lat,m.lng); if(!mp)continue;
+    ctx.save(); ctx.translate(mp.x,mp.y); ctx.rotate(Math.atan2(m.dlng,m.dlat));
+    ctx.fillStyle='#ff6622'; ctx.fillRect(-8,-2,16,4);
+    ctx.fillStyle='#ffcc44'; ctx.fillRect(7,-2,3,4);
+    // Warning glow ring
+    ctx.beginPath(); ctx.arc(0,0,10,0,6.283);
+    ctx.strokeStyle='rgba(255,80,20,0.40)'; ctx.lineWidth=3; ctx.stroke();
+    ctx.restore();
+  }
+
+  // Legacy simple blasts
   for(const b of tdBlasts){
     const pt=tdToScreen(b.lat,b.lng); if(!pt)continue;
     const a=b.life/1.8;
@@ -2703,22 +2899,59 @@ function renderTopdown(){
     eg.addColorStop(1,`rgba(60,60,60,0)`);
     ctx.fillStyle=eg; ctx.beginPath(); ctx.arc(pt.x,pt.y,Math.max(1,b.r),0,6.283); ctx.fill();
   }
+  // ── Rich air explosions ──
+  for(const b of tdAirBlasts){
+    const pt=tdToScreen(b.lat,b.lng); if(!pt)continue;
+    const af=b.life/b.max;
+    // Flash ring
+    if(b.r<60){
+      const eg=ctx.createRadialGradient(pt.x,pt.y,0,pt.x,pt.y,b.r);
+      eg.addColorStop(0,`rgba(255,255,200,${af*0.9})`);
+      eg.addColorStop(0.3,`rgba(255,140,20,${af*0.7})`);
+      eg.addColorStop(1,'rgba(60,30,10,0)');
+      ctx.fillStyle=eg; ctx.beginPath(); ctx.arc(pt.x,pt.y,Math.max(1,b.r),0,6.283); ctx.fill();
+    }
+    // Debris particles
+    for(const p of b.pts){
+      const pp=tdToScreen(p.lat,p.lng); if(!pp)continue;
+      const pa=p.life/p.max;
+      ctx.globalAlpha=pa;
+      ctx.beginPath(); ctx.arc(pp.x,pp.y,p.r*pa+0.5,0,6.283);
+      ctx.fillStyle=p.smoke?`rgba(50,50,50,${pa})`
+        :p.ring?`rgba(255,220,80,${pa})`:`rgba(255,${100+pa*80|0},20,1)`;
+      ctx.fill();
+    }
+    ctx.globalAlpha=1;
+  }
+  // ── Ground explosions ──
+  for(const b of tdGroundBlasts){
+    if(b.delay>0) continue;
+    const pt=tdToScreen(b.lat,b.lng); if(!pt)continue;
+    const af=b.life/b.max;
+    if(b.r>0){
+      const eg=ctx.createRadialGradient(pt.x,pt.y,0,pt.x,pt.y,b.r);
+      eg.addColorStop(0,`rgba(255,160,30,${af*0.85})`);
+      eg.addColorStop(0.5,`rgba(120,60,10,${af*0.55})`);
+      eg.addColorStop(1,'rgba(40,20,5,0)');
+      ctx.fillStyle=eg; ctx.beginPath(); ctx.arc(pt.x,pt.y,Math.max(1,b.r),0,6.283); ctx.fill();
+    }
+    for(const p of b.pts){
+      const pp=tdToScreen(p.lat,p.lng); if(!pp)continue;
+      const pa=p.life/p.max;
+      ctx.globalAlpha=pa*0.85;
+      ctx.beginPath(); ctx.arc(pp.x,pp.y,p.r*pa+0.5,0,6.283);
+      ctx.fillStyle=p.smoke?`rgba(30,20,10,${pa})`:`rgba(200,${80+pa*60|0},10,1)`;
+      ctx.fill();
+    }
+    ctx.globalAlpha=1;
+  }
   // Enemies
   for(const e of tdEnemies){
     if(!e.alive)continue;
     const pt=tdToScreen(e.lat,e.lng); if(!pt||pt.x<-70||pt.x>W+70||pt.y<-70||pt.y>H+70)continue;
     ctx.save(); ctx.translate(pt.x,pt.y); ctx.rotate(e.hdg*Math.PI/180);
     drawTDJet(ctx,15,true); ctx.restore();
-    if(e===tdPlayer.locked){
-      const bs=26; ctx.strokeStyle='rgba(255,60,60,0.95)'; ctx.lineWidth=2;
-      // Corner brackets
-      for(const [sx,sy] of[[-1,-1],[1,-1],[1,1],[-1,1]]){
-        ctx.beginPath(); ctx.moveTo(pt.x+sx*(bs),pt.y+sy*(bs-10)); ctx.lineTo(pt.x+sx*bs,pt.y+sy*bs); ctx.lineTo(pt.x+sx*(bs-10),pt.y+sy*bs); ctx.stroke();
-      }
-      const d=tdDist({lat:tdPlayer.lat,lng:tdPlayer.lng},{lat:e.lat,lng:e.lng});
-      ctx.fillStyle='rgba(255,60,60,0.95)'; ctx.font='bold 11px monospace'; ctx.textAlign='center';
-      ctx.fillText(`MiG-29  ●  ${d.toFixed(2)} km`,pt.x,pt.y-bs-8);
-    }
+    if(e===tdPlayer.locked){ drawLockBracket(pt.x,pt.y,26,'MiG-29'); }
   }
   // ── Aim line (gun crosshair from nose) ──
   if(tdPlayer.health>0){
@@ -2867,6 +3100,24 @@ function drawStar5(c,cx,cy,R,r,col){
   c.closePath(); c.fillStyle=col; c.fill();
 }
 
+function drawLockBracket(x,y,bs,label){
+  const pulse=0.7+0.3*Math.sin(tdLockAnim*8);
+  ctx.strokeStyle=`rgba(255,60,60,${0.85*pulse+0.1})`; ctx.lineWidth=2;
+  for(const [sx,sy] of[[-1,-1],[1,-1],[1,1],[-1,1]]){
+    ctx.beginPath();
+    ctx.moveTo(x+sx*bs,y+sy*(bs-10));
+    ctx.lineTo(x+sx*bs,y+sy*bs);
+    ctx.lineTo(x+sx*(bs-10),y+sy*bs);
+    ctx.stroke();
+  }
+  // Pulsing inner dot
+  ctx.beginPath(); ctx.arc(x,y,3*pulse,0,6.283);
+  ctx.fillStyle=`rgba(255,80,80,${pulse})`; ctx.fill();
+  // Label
+  ctx.fillStyle='rgba(255,60,60,0.95)'; ctx.font='bold 11px monospace'; ctx.textAlign='center';
+  ctx.fillText(`${label}  ${tdPlayer.locked?tdDist({lat:tdPlayer.lat,lng:tdPlayer.lng},{lat:tdPlayer.locked.lat,lng:tdPlayer.locked.lng}).toFixed(1)+' km':''}`,x,y-bs-6);
+}
+
 function drawTopdownHUD(){
   // ── Compass (top-left) ──
   const cpx=82,cpy=82,cr=54;
@@ -2926,13 +3177,30 @@ function drawTopdownHUD(){
 
   // ── Lock-on targeting box ──
   if(tdPlayer.locked){
-    const d=tdDist({lat:tdPlayer.lat,lng:tdPlayer.lng},{lat:tdPlayer.locked.lat,lng:tdPlayer.locked.lng});
-    ctx.fillStyle='rgba(0,8,24,0.72)'; tdRR(ctx,W/2-110,H*0.17,220,44,6); ctx.fill();
-    ctx.strokeStyle='rgba(255,60,60,0.7)'; ctx.lineWidth=1.5; tdRR(ctx,W/2-110,H*0.17,220,44,6); ctx.stroke();
-    ctx.fillStyle='#ff5555'; ctx.font='bold 12px monospace'; ctx.textAlign='center';
-    ctx.fillText('TARGET LOCK',W/2,H*0.17+16);
+    const lk=tdPlayer.locked;
+    const d=tdDist({lat:tdPlayer.lat,lng:tdPlayer.lng},{lat:lk.lat,lng:lk.lng});
+    const isSAMTgt=lk.radarAngle!==undefined;
+    const pulse=0.7+0.3*Math.sin(tdLockAnim*8);
+    ctx.fillStyle='rgba(0,8,24,0.78)'; tdRR(ctx,W/2-120,H*0.08,240,50,6); ctx.fill();
+    ctx.strokeStyle=`rgba(255,${isSAMTgt?120:60},${isSAMTgt?30:60},${0.5+0.4*pulse})`; ctx.lineWidth=1.5; tdRR(ctx,W/2-120,H*0.08,240,50,6); ctx.stroke();
+    ctx.textAlign='center';
+    ctx.fillStyle=`rgba(255,${isSAMTgt?120:80},${isSAMTgt?30:80},${0.8+0.2*pulse})`;
+    ctx.font='bold 11px monospace'; ctx.fillText(isSAMTgt?'⚠ SAM LOCK':'🎯 TARGET LOCK',W/2,H*0.08+16);
     ctx.fillStyle='#ffcc00'; ctx.font='12px monospace';
-    ctx.fillText(`MiG-29  ●  ${d.toFixed(2)} km`,W/2,H*0.17+36);
+    ctx.fillText(`${isSAMTgt?'SAM SITE':'MiG-29'}  ●  ${d.toFixed(2)} km  [E=FIRE]`,W/2,H*0.08+36);
+  }
+  // SAM warning count
+  const activeSAMs=tdSAMs.filter(s=>s.alive).length;
+  if(activeSAMs>0||tdSAMmissiles.length>0){
+    const wx=W/2, wy=H*0.08+62;
+    if(tdSAMmissiles.length>0){
+      const wp=0.5+0.5*Math.sin(tdLockAnim*12);
+      ctx.fillStyle=`rgba(255,50,20,${0.7+0.3*wp})`; ctx.font='bold 11px monospace'; ctx.textAlign='center';
+      ctx.fillText(`⚠ INCOMING SAM ×${tdSAMmissiles.length}`,wx,wy);
+    } else {
+      ctx.fillStyle='rgba(255,160,40,0.6)'; ctx.font='10px monospace'; ctx.textAlign='center';
+      ctx.fillText(`SAM SITES ACTIVE: ${activeSAMs}`,wx,wy);
+    }
   }
 
   // ── Right-side hex buttons ──
@@ -2994,8 +3262,10 @@ function tdHexBtn(x,y,r,icon,lbl){
 function initTopdownGame(){
   syncSize();
   Object.assign(tdPlayer,{lat:TD_HOME.lat,lng:TD_HOME.lng,hdg:0,speed:200,alt:8000,gear:false,throttle:0.7,health:100,missiles:6,fireTimer:0,missileTimer:0,locked:null,landed:false,landTimer:0});
-  tdScore=0; tdTime2=0; tdSpawnTimer=5; tdLockTimer=0;
+  tdScore=0; tdTime2=0; tdSpawnTimer=5; tdLockTimer=0; tdLockAnim=0;
   tdEnemies.length=0; tdBullets.length=0; tdMissiles2.length=0; tdBlasts.length=0;
+  tdSAMs=TD_SAM_SITES.map(s=>({...s,health:3,alive:true,fireTimer:3+Math.random()*8,radarAngle:Math.random()*6.28}));
+  tdSAMmissiles.length=0; tdAirBlasts.length=0; tdGroundBlasts.length=0;
 
   const mapDiv=document.getElementById('td-map');
   mapDiv.style.display='block';
@@ -3128,6 +3398,7 @@ function applyAutoJet(dt){
 
   // ── Pad covers bottom 46% of screen ──
   const pad=document.createElement('div');
+  pad.dataset.touchpad='1';
   pad.style.cssText='position:fixed;bottom:0;left:0;width:100%;height:26%;z-index:9999;display:none;'
                    +'touch-action:none;user-select:none;pointer-events:none;';
   document.body.appendChild(pad);
@@ -3230,64 +3501,103 @@ function applyAutoJet(dt){
   },{passive:false});
   document.body.appendChild(muteBtn);
 
-  // ── Button layout helpers ──
-  // 2 rows × 4 cols inside the pad (compact — pad is 26% of screen height)
-  const C1='1%',C2='26%',C3='51%',C4='76%';
-  const RR1='3%',RR2='52%';   // row top positions within pad
-  const BW='22vw', BH='44%';
-  function kb(html,code,c,r,fs){ makeBtn(html,code,c,r,BW,BH,fs||'12px',false,null); }
-  function tb(html,c,r,cb,fs)  { makeBtn(html,null,c,r,BW,BH,fs||'11px',true,cb); }
+  // ── Button layout helpers — 50% of original size, centred ──
+  // 4 cols centred: each 11vw wide, 1.5vw gap → total 47vw
+  const C1='calc(50% - 23.5vw)',C2='calc(50% - 11vw)',C3='calc(50% + 1.5vw)',C4='calc(50% + 14vw)';
+  const CB='2%'; // BACK button far-left
+  const RR1='5%',RR2='53%';
+  const BW='11vw', BH='42%';
+  function kb(html,code,c,r,fs){ makeBtn(html,code,c,r,BW,BH,fs||'10px',false,null); }
+  function tb(html,c,r,cb,fs)  { makeBtn(html,null,c,r,BW,BH,fs||'9px',true,cb); }
+  // BACK button — spans both rows, calls global goBack()
+  function addBack(){
+    const el=document.createElement('div');
+    el.innerHTML='◀<br><small style="font-size:7px">MENU</small>';
+    el.style.cssText=BASE+`left:${CB};top:5%;width:${BW};height:90%;font-size:10px;`
+      +`background:rgba(20,10,40,0.65);pointer-events:none;border-color:rgba(100,160,220,0.5);`;
+    el.dataset.backbtn='1';
+    pad.appendChild(el);
+    return el;
+  }
 
   // ── Track which buttons belong to each mode ──
   let modeSlices={yacht:[],jet:[],topdown:[]};
+  let backEls=[];
   function startMode(m){ modeSlices[m]=[registry.length]; }
   function endMode(m)  { modeSlices[m].push(registry.length); }
 
   // ── YACHT: W=lean↑  S=lean↓  D=fwd  A=rev  Shift=boost ──
   startMode('yacht');
-  kb('▲<br><small>LEAN</small>',  'KeyW',      C1,RR1,'15px');
-  kb('▼<br><small>LEAN</small>',  'KeyS',      C1,RR2,'15px');
-  kb('⛵<br><small>FWD</small>',  'KeyD',      C2,RR1,'15px');
-  kb('↩<br><small>REV</small>',   'KeyA',      C2,RR2,'15px');
-  kb('💨<br><small>BOOST</small>','ShiftLeft', C3,RR1,'15px');
-  tb('⚓<br><small>AUTO</small>',  C3,RR2,v=>{autoSail=v;if(!v)autoCruise=false;},'13px');
+  kb('▲<br><small>LEAN</small>',  'KeyW',      C1,RR1,'12px');
+  kb('▼<br><small>LEAN</small>',  'KeyS',      C1,RR2,'12px');
+  kb('⛵<br><small>FWD</small>',  'KeyD',      C2,RR1,'12px');
+  kb('↩<br><small>REV</small>',   'KeyA',      C2,RR2,'12px');
+  kb('💨<br><small>BOOST</small>','ShiftLeft', C3,RR1,'12px');
+  tb('⚓<br><small>AUTO</small>',  C3,RR2,v=>{autoSail=v;if(!v)autoCruise=false;},'10px');
   endMode('yacht');
 
-  // ── JET (side-scroll): W=climb  S=dive  D=throttle+  A=throttle-  Space=fire  KeyE=missile  Shift=afterburner ──
+  // ── JET (side-scroll) ──
   startMode('jet');
-  kb('▲<br><small>CLIMB</small>', 'KeyW',      C1,RR1,'15px');
-  kb('▼<br><small>DIVE</small>',  'KeyS',      C1,RR2,'15px');
-  kb('▶<br><small>THRTL+</small>','KeyD',      C2,RR1,'15px');
-  kb('◀<br><small>THRTL-</small>','KeyA',      C2,RR2,'15px');
-  kb('🔥<br><small>FIRE</small>', 'Space',     C3,RR1,'19px');
-  kb('🚀<br><small>MISS</small>', 'KeyE',      C3,RR2,'19px');
-  kb('⚡<br><small>BURN</small>', 'ShiftLeft', C4,RR1,'19px');
-  tb('🤖<br><small>AUTO</small>',  C4,RR2,v=>{autoJetMode=v;},'13px');
+  kb('▲<br><small>CLIMB</small>', 'KeyW',      C1,RR1,'10px');
+  kb('▼<br><small>DIVE</small>',  'KeyS',      C1,RR2,'10px');
+  kb('▶<br><small>THRTL+</small>','KeyD',      C2,RR1,'10px');
+  kb('◀<br><small>THRTL-</small>','KeyA',      C2,RR2,'10px');
+  kb('🔥<br><small>FIRE</small>', 'Space',     C3,RR1,'13px');
+  kb('🚀<br><small>MISS</small>', 'KeyE',      C3,RR2,'13px');
+  kb('⚡<br><small>BURN</small>', 'ShiftLeft', C4,RR1,'13px');
+  tb('🤖<br><small>AUTO</small>',  C4,RR2,v=>{autoJetMode=v;},'9px');
   endMode('jet');
 
-  // ── TOP-DOWN: A=turn-L  D=turn-R  W=speed+  S=speed-  Space=guns  KeyE=missile  Shift=boost ──
+  // ── TOP-DOWN (sky combat) ──
   startMode('topdown');
-  kb('▲<br><small>SPEED+</small>','KeyW',      C1,RR1,'15px');
-  kb('▼<br><small>SPEED-</small>','KeyS',      C1,RR2,'15px');
-  kb('◀<br><small>TURN L</small>','KeyA',      C2,RR1,'15px');
-  kb('▶<br><small>TURN R</small>','KeyD',      C2,RR2,'15px');
-  kb('🔫<br><small>FIRE</small>', 'Space',     C3,RR1,'19px');
-  kb('🚀<br><small>MISS</small>', 'KeyE',      C3,RR2,'19px');
-  kb('⚡<br><small>BOOST</small>','ShiftLeft', C4,RR1,'19px');
-  tb('🤖<br><small>AUTO</small>',  C4,RR2,v=>{autoJetMode=v;},'13px');
+  kb('▲<br><small>SPD+</small>',  'KeyW',      C1,RR1,'10px');
+  kb('▼<br><small>SPD-</small>',  'KeyS',      C1,RR2,'10px');
+  kb('◀<br><small>TURN L</small>','KeyA',      C2,RR1,'10px');
+  kb('▶<br><small>TURN R</small>','KeyD',      C2,RR2,'10px');
+  kb('🔫<br><small>GUNS</small>', 'Space',     C3,RR1,'13px');
+  kb('🚀<br><small>MISS</small>', 'KeyE',      C3,RR2,'13px');
+  kb('⚡<br><small>BOOST</small>','ShiftLeft', C4,RR1,'13px');
   endMode('topdown');
 
+  // ── Shared BACK button (non-registry, always shown) ──
+  const backBtnEl=addBack();
+
+  // ── Shared PAUSE button (topdown only, non-registry) ──
+  const pauseBtnEl=document.createElement('div');
+  pauseBtnEl.innerHTML='⏸<br><small style="font-size:7px">PAUSE</small>';
+  pauseBtnEl.style.cssText=BASE+`left:${C4};top:${RR2};width:${BW};height:${BH};font-size:10px;`
+    +`background:rgba(20,10,40,0.65);pointer-events:none;display:none;border-color:rgba(200,180,60,0.5);`;
+  pauseBtnEl.dataset.pausebtn='1';
+  pad.appendChild(pauseBtnEl);
+
+  // Handle taps on BACK and PAUSE via capture touchstart
+  pad.addEventListener('touchstart',e=>{
+    for(const t of e.changedTouches){
+      const bR=backBtnEl.getBoundingClientRect();
+      if(t.clientX>=bR.left&&t.clientX<=bR.right&&t.clientY>=bR.top&&t.clientY<=bR.bottom){
+        e.preventDefault(); goBack(); return;
+      }
+      if(pauseBtnEl.style.display!=='none'){
+        const pR=pauseBtnEl.getBoundingClientRect();
+        if(t.clientX>=pR.left&&t.clientX<=pR.right&&t.clientY>=pR.top&&t.clientY<=pR.bottom){
+          e.preventDefault(); togglePause(); return;
+        }
+      }
+    }
+  },{passive:false,capture:true});
+  backBtnEl.addEventListener('mousedown',e=>{e.preventDefault();goBack();});
+  pauseBtnEl.addEventListener('mousedown',e=>{e.preventDefault();togglePause();});
+
   function showMode(mode){
-    // Hide all buttons
     registry.forEach(b=>b.el.style.display='none');
-    // Release all keys from previous mode
     registry.forEach(b=>{ if(b.code) keys[b.code]=false; });
     Object.keys(touchMap).forEach(k=>delete touchMap[k]);
-    // Show buttons for this mode
     const sl=modeSlices[mode];
     if(sl&&sl.length===2){
       for(let i=sl[0];i<sl[1];i++) registry[i].el.style.display='flex';
     }
+    backBtnEl.style.display='flex';
+    pauseBtnEl.style.display=mode==='topdown'?'flex':'none';
     pad.style.display='block';
     muteBtn.style.display='flex';
     if(mode==='yacht') Music.ocean();
