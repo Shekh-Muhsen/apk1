@@ -740,6 +740,7 @@ function gameLoop(ts){
 }
 
 function update(dt){
+  applyAutoSail();
   gameTime+=dt;
   dayTime=(dayTime+dt/600)%1;
   ocean.t += dt*(0.6+seaState*0.12);
@@ -1966,6 +1967,7 @@ function spawnJExplosion(x,y,pwr){
 }
 
 function updateJetGame(dt){
+  applyAutoJet(dt);
   jetTime+=dt;
   jetCam.shake=Math.max(0,jetCam.shake-dt*12);
   const up=keys['KeyW']||keys['ArrowUp'];
@@ -3013,62 +3015,194 @@ function initTopdownGame(){
 window.addEventListener('resize', syncSize);
 
 // ══════════════════════════════════════════════════════════
-// MOBILE TOUCH CONTROLS
-// Touch buttons inject into keys[] exactly like keyboard,
-// so all three game modes work with zero changes to game logic.
+// MUSIC  (Web Audio — procedural, no files needed)
+// ══════════════════════════════════════════════════════════
+const Music=(function(){
+  let ac=null,master=null,nodes=[],timer=null,muted=false;
+  function ctx(){
+    if(!ac){ac=new(window.AudioContext||window.webkitAudioContext)();master=ac.createGain();master.gain.value=0.28;master.connect(ac.destination);}
+    if(ac.state==='suspended')ac.resume(); return ac;
+  }
+  function mkOsc(type,freq,vol,dest){
+    const c=ctx(),o=c.createOscillator(),g=c.createGain();
+    o.type=type;o.frequency.value=freq;g.gain.value=vol;
+    o.connect(g);g.connect(dest||master);o.start();nodes.push(o);return{o,g};
+  }
+  function stop(){nodes.forEach(n=>{try{n.stop();}catch(e){}});nodes=[];if(timer){clearInterval(timer);timer=null;}}
+  function ocean(){
+    stop();const c=ctx();
+    const d=mkOsc('sine',55,0.30);
+    mkOsc('sine',110,0.10);
+    const lfo=mkOsc('sine',0.11,0);
+    lfo.g.gain.value=0;
+    const lfoG=c.createGain();lfoG.gain.value=3.5;lfo.o.connect(lfoG);lfoG.connect(d.o.frequency);
+    lfo.o.start&&0; // already started
+    const bellFreqs=[330,392,440,523,659,784];
+    timer=setInterval(()=>{
+      if(!gameRunning||muted)return;
+      const c2=ctx(),f=bellFreqs[Math.random()*bellFreqs.length|0];
+      const b=c2.createOscillator(),bg=c2.createGain();
+      b.type='sine';b.frequency.value=f;
+      bg.gain.setValueAtTime(0.09,c2.currentTime);
+      bg.gain.exponentialRampToValueAtTime(0.001,c2.currentTime+2.2);
+      b.connect(bg);bg.connect(master);b.start();b.stop(c2.currentTime+2.2);
+    },2600+Math.random()*1200);
+  }
+  function jetMusic(){
+    stop();const c=ctx();
+    mkOsc('sawtooth',80,0.16);mkOsc('sawtooth',160,0.07);
+    const lfoG=c.createGain();lfoG.gain.value=0.18;
+    const lfo=c.createOscillator();lfo.frequency.value=6;lfo.start();nodes.push(lfo);
+    const pump=c.createGain();pump.gain.value=0.14;lfo.connect(lfoG);lfoG.connect(pump.gain);
+    const b=c.createOscillator();b.type='sawtooth';b.frequency.value=80;b.start();nodes.push(b);
+    b.connect(pump);pump.connect(master);
+    const mel=[392,440,494,523,587,523,440,392];let mi=0;
+    const lead=mkOsc('square',440,0.05);
+    timer=setInterval(()=>{if(!gameRunning||muted)return;lead.o.frequency.value=mel[mi++%mel.length];},260);
+  }
+  function topdownMusic(){
+    stop();
+    mkOsc('sine',130,0.18);mkOsc('triangle',195,0.09);mkOsc('sine',260,0.05);
+    const c=ctx(),lfo=c.createOscillator(),lg=c.createGain();
+    lfo.frequency.value=0.45;lg.gain.value=0.06;lfo.connect(lg);
+    const dest=c.createGain();dest.gain.value=0.18;lg.connect(dest.gain);
+    const pad=c.createOscillator();pad.type='sine';pad.frequency.value=130;pad.connect(dest);dest.connect(master);pad.start();nodes.push(pad,lfo);lfo.start();
+  }
+  function setMute(v){muted=v;if(master)master.gain.value=v?0:0.28;}
+  return{ocean,jet:jetMusic,topdown:topdownMusic,stop,setMute};
+})();
+
+// ══════════════════════════════════════════════════════════
+// AUTO MODES
+// ══════════════════════════════════════════════════════════
+let autoSail=false, autoJetMode=false;
+
+function applyAutoSail(){
+  if(!autoSail)return;
+  autoCruise=true; cruiseTarget=0.70;
+}
+function applyAutoJet(dt){
+  if(!autoJetMode)return;
+  jetState.throttle=Math.min(1,jetState.throttle+dt*0.6);
+  let best=null,bestD=Infinity;
+  for(const t of groundTargets){if(!t.alive)continue;const d=Math.hypot(t.x-jetState.x,t.y-jetState.y);if(d<bestD){bestD=d;best=t;}}
+  for(const e of enemyJets){if(!e.alive)continue;const d=Math.hypot(e.x-jetState.x,e.y-jetState.y);if(d<bestD){bestD=d;best=e;}}
+  if(best){
+    const ta=Math.atan2(best.y-jetState.y,best.x-jetState.x);
+    let diff=ta-jetState.ang;
+    while(diff>Math.PI)diff-=Math.PI*2;while(diff<-Math.PI)diff+=Math.PI*2;
+    jetState.ang+=Math.sign(diff)*Math.min(Math.abs(diff),2.8*dt);
+    keys['Space']=bestD<360; keys['KeyE']=bestD<220&&Math.random()<0.03;
+  } else { keys['Space']=false; keys['KeyE']=false; }
+}
+
+// ══════════════════════════════════════════════════════════
+// MOBILE TOUCH CONTROLS  (mode-aware buttons + AUTO + MUSIC)
 // ══════════════════════════════════════════════════════════
 (function setupTouch(){
-  // ── Touch-pad overlay (hidden until game starts) ──
-  const pad = document.createElement('div');
-  pad.id = 'touch-pad';
-  pad.style.cssText = `
-    position:fixed; bottom:0; left:0; width:100%; height:42%;
-    pointer-events:none; z-index:999; display:none;
-    font-family:sans-serif; user-select:none;
-  `;
+  const BS='position:absolute;display:flex;align-items:center;justify-content:center;border-radius:14px;color:#fff;font-weight:bold;pointer-events:all;touch-action:none;-webkit-tap-highlight-color:transparent;border:2px solid rgba(255,255,255,0.38);';
+  const BG='rgba(255,255,255,0.17)', BGA='rgba(255,255,255,0.42)';
+
+  const pad=document.createElement('div');
+  pad.style.cssText='position:fixed;bottom:0;left:0;width:100%;height:44%;pointer-events:none;z-index:999;display:none;user-select:none;';
   document.body.appendChild(pad);
 
-  function btn(label, code, x, y, w, h, extra){
-    const b = document.createElement('div');
-    b.innerHTML = label;
-    b.style.cssText = `
-      position:absolute; left:${x}; bottom:${y}; width:${w}; height:${h};
-      background:rgba(255,255,255,0.18); border:2px solid rgba(255,255,255,0.4);
-      border-radius:14px; color:#fff; font-size:22px; font-weight:bold;
-      display:flex; align-items:center; justify-content:center;
-      pointer-events:all; touch-action:none; -webkit-tap-highlight-color:transparent;
-      ${extra||''}
-    `;
-    const down = e=>{ e.preventDefault(); keys[code]=true; b.style.background='rgba(255,255,255,0.40)'; };
-    const up   = e=>{ e.preventDefault(); keys[code]=false; b.style.background='rgba(255,255,255,0.18)'; };
-    b.addEventListener('touchstart', down, {passive:false});
-    b.addEventListener('touchend',   up,   {passive:false});
-    b.addEventListener('touchcancel',up,   {passive:false});
-    pad.appendChild(b);
-    return b;
+  // ── Key-hold button ──
+  function kBtn(html,code,l,b,w,h,fs){
+    const el=document.createElement('div');
+    el.innerHTML=html;
+    el.style.cssText=BS+`left:${l};bottom:${b};width:${w};height:${h};font-size:${fs||'22px'};background:${BG};`;
+    const dn=e=>{e.preventDefault();keys[code]=true;el.style.background=BGA;};
+    const up=e=>{e.preventDefault();keys[code]=false;el.style.background=BG;};
+    el.addEventListener('touchstart',dn,{passive:false});
+    el.addEventListener('touchend',up,{passive:false});
+    el.addEventListener('touchcancel',up,{passive:false});
+    pad.appendChild(el); return el;
   }
 
-  // LEFT cluster — movement / turn
-  btn('◀', 'KeyA',      '2%',  '52%', '18vw', '38%');
-  btn('▶', 'KeyD',      '22%', '52%', '18vw', '38%');
-  btn('▲', 'KeyW',      '12%', '92%', '18vw', '38%', 'bottom:auto;top:2%;');  // up
-  btn('▼', 'KeyS',      '12%', '52%', '18vw', '38%');
+  // ── Toggle button (no key, calls callback) ──
+  function tBtn(html,l,b,w,h,onToggle,fs){
+    const el=document.createElement('div');
+    el.innerHTML=html; let on=false;
+    el.style.cssText=BS+`left:${l};bottom:${b};width:${w};height:${h};font-size:${fs||'13px'};background:${BG};flex-direction:column;`;
+    el.addEventListener('touchstart',e=>{
+      e.preventDefault(); on=!on;
+      el.style.background=on?'rgba(0,200,100,0.55)':BG;
+      onToggle(on);
+    },{passive:false});
+    pad.appendChild(el); return el;
+  }
 
-  // RIGHT cluster — action buttons
-  btn('🔥', 'Space',    '62%', '52%', '18vw', '38%', 'font-size:26px;');  // fire / throttle
-  btn('🚀', 'KeyE',     '82%', '52%', '18vw', '38%', 'font-size:26px;');  // missile
-  btn('⚡', 'ShiftLeft','72%', '8%',  '18vw', '30%', 'font-size:20px;');  // boost
+  // ── Music mute toggle (top-right corner, always visible in-game) ──
+  const muteBtn=document.createElement('div');
+  muteBtn.innerHTML='🔊'; let muted=false;
+  muteBtn.style.cssText=BS+`right:3%;top:6%;width:12vw;height:12vw;font-size:22px;background:rgba(0,0,0,0.35);border-color:rgba(255,255,255,0.3);`;
+  muteBtn.addEventListener('touchstart',e=>{
+    e.preventDefault(); muted=!muted; Music.setMute(muted);
+    muteBtn.innerHTML=muted?'🔇':'🔊';
+  },{passive:false});
+  muteBtn.style.display='none'; document.body.appendChild(muteBtn);
 
-  // Show/hide pad when game starts/stops
-  const origStart = window.startGame;
-  window.startGame = function(){
-    origStart && origStart();
-    // small delay so gameMode is set first
-    setTimeout(()=>{ pad.style.display = 'block'; }, 100);
+  // ── Build per-mode button sets ──
+  let yachtBtns=[], jetBtns=[], tdBtns=[];
+
+  function buildYacht(){
+    // Left: ⛵ Forward (D) | ⬅ Backward (A) | bow up (W) | bow down (S)
+    yachtBtns.push(kBtn('⛵<br><small>FWD</small>','KeyD',  '2%','52%','20vw','36%','18px'));
+    yachtBtns.push(kBtn('🔙<br><small>BACK</small>','KeyA', '24%','52%','20vw','36%','18px'));
+    yachtBtns.push(kBtn('⬆️','KeyW',   '13%','90%','20vw','36%','22px'));
+    yachtBtns.push(kBtn('⬇️','KeyS',   '13%','52%','20vw','36%','22px'));
+    // Right: boost + auto-sail
+    yachtBtns.push(kBtn('💨<br><small>BOOST</small>','ShiftLeft','62%','52%','20vw','36%','16px'));
+    yachtBtns.push(tBtn('⚓<br>AUTO<br>SAIL','84%','52%','13vw','36%',v=>{autoSail=v;if(!v){autoCruise=false;}},'11px'));
+  }
+
+  function buildJet(){
+    // Left: turn L/R + throttle up/down
+    jetBtns.push(kBtn('◀','KeyA',   '2%','52%','18vw','36%'));
+    jetBtns.push(kBtn('▶','KeyD',   '22%','52%','18vw','36%'));
+    jetBtns.push(kBtn('▲','KeyW',   '12%','90%','18vw','36%','24px'));
+    jetBtns.push(kBtn('▼','KeyS',   '12%','52%','18vw','36%','24px'));
+    // Right: fire, missile, boost, auto
+    jetBtns.push(kBtn('🔥','Space', '55%','52%','18vw','36%','24px'));
+    jetBtns.push(kBtn('🚀','KeyE',  '75%','52%','18vw','36%','24px'));
+    jetBtns.push(kBtn('⚡','ShiftLeft','65%','90%','18vw','36%','24px'));
+    jetBtns.push(tBtn('🤖<br>AUTO<br>FLY','84%','90%','13vw','36%',v=>{autoJetMode=v;},'11px'));
+  }
+
+  function buildTD(){
+    tdBtns.push(kBtn('◀','KeyA',   '2%','52%','18vw','36%'));
+    tdBtns.push(kBtn('▶','KeyD',   '22%','52%','18vw','36%'));
+    tdBtns.push(kBtn('▲','KeyW',   '12%','90%','18vw','36%','24px'));
+    tdBtns.push(kBtn('▼','KeyS',   '12%','52%','18vw','36%','24px'));
+    tdBtns.push(kBtn('🔫','Space', '55%','52%','18vw','36%','24px'));
+    tdBtns.push(kBtn('🚀','KeyE',  '75%','52%','18vw','36%','24px'));
+    tdBtns.push(kBtn('⚡','ShiftLeft','65%','90%','18vw','36%','24px'));
+    tdBtns.push(kBtn('⚙️','KeyG',  '84%','90%','13vw','36%','20px')); // gear
+  }
+
+  function showMode(mode){
+    [...yachtBtns,...jetBtns,...tdBtns].forEach(b=>b.style.display='none');
+    if(mode==='yacht') yachtBtns.forEach(b=>b.style.display='flex');
+    else if(mode==='jet') jetBtns.forEach(b=>b.style.display='flex');
+    else if(mode==='topdown') tdBtns.forEach(b=>b.style.display='flex');
+    pad.style.display='block'; muteBtn.style.display='flex';
+    // Start music
+    if(mode==='yacht') Music.ocean();
+    else if(mode==='jet') Music.jet();
+    else if(mode==='topdown') Music.topdown();
+  }
+
+  buildYacht(); buildJet(); buildTD();
+
+  // Hook into startGame
+  const orig=window.startGame;
+  window.startGame=function(){
+    orig&&orig();
+    setTimeout(()=>showMode(gameMode),120);
   };
 
-  // Prevent context menu on long-press (mobile)
-  pad.addEventListener('contextmenu', e=>e.preventDefault());
+  pad.addEventListener('contextmenu',e=>e.preventDefault());
 })();
 </script>
 </body>
