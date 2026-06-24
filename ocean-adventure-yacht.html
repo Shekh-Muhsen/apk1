@@ -3168,46 +3168,52 @@ function applyAutoJet(dt){
   muteBtn.style.display='none'; document.body.appendChild(muteBtn);
 
   // ── Build per-mode button sets ──
+  // Layout: pad is position:fixed bottom:0, height:44vh
+  // 2 rows × 4 cols. Each btn = 22vw wide, 44% tall, 2% gap
+  // Cols: L1=2% L2=26% L3=54% L4=78%
+  // Rows: R1=top:2%  R2=top:54%
   let yachtBtns=[], jetBtns=[], tdBtns=[];
-
-  // Row positions inside the fixed pad (height=44vh)
-  // top row: top:2%  bottom row: bottom:2%  height of each btn: 44%
-  function T(l,t,w,h){return {l,t,w,h};}
-  const R1='2%',R2='54%'; // top-row top%, bottom-row top%
+  const C1='2%',C2='26%',C3='54%',C4='78%';
+  const R1='2%',R2='54%';
+  const BW='22vw', BH='44%';
 
   function buildYacht(){
-    // Left 2×2: steer up/down | throttle fwd/rev
-    yachtBtns.push(kBtnT('▲<br><small>LEAN</small>',  'KeyW', '2%', R1,'20vw','44%','18px'));
-    yachtBtns.push(kBtnT('▼<br><small>LEAN</small>',  'KeyS', '2%', R2,'20vw','44%','18px'));
-    yachtBtns.push(kBtnT('⛵<br><small>FWD</small>',  'KeyD','24%', R1,'20vw','44%','18px'));
-    yachtBtns.push(kBtnT('🔙<br><small>REV</small>',  'KeyA','24%', R2,'20vw','44%','18px'));
-    // Right: boost top, auto-sail bottom
-    yachtBtns.push(kBtnT('💨<br><small>BOOST</small>','ShiftLeft','78%',R1,'19vw','44%','16px'));
-    yachtBtns.push(tBtnT('⚓<br>AUTO','78%',R2,'19vw','44%',v=>{autoSail=v;if(!v)autoCruise=false;},'12px'));
+    // YACHT: W=lean-bow-up, S=lean-bow-down, D=throttle-fwd, A=throttle-rev, Shift=boost
+    // Left pair: lean controls
+    // Right pair: throttle controls
+    // Far right: boost + auto
+    yachtBtns.push(kBtnT('▲<br><small>LEAN↑</small>','KeyW', C1,R1,BW,BH,'16px'));
+    yachtBtns.push(kBtnT('▼<br><small>LEAN↓</small>','KeyS', C1,R2,BW,BH,'16px'));
+    yachtBtns.push(kBtnT('⛵<br><small>FWD</small>',  'KeyD', C2,R1,BW,BH,'16px'));
+    yachtBtns.push(kBtnT('🔙<br><small>REV</small>',  'KeyA', C2,R2,BW,BH,'16px'));
+    yachtBtns.push(kBtnT('💨<br><small>BOOST</small>','ShiftLeft',C3,R1,BW,BH,'16px'));
+    yachtBtns.push(tBtnT('⚓<br><small>AUTO</small>',  C3,R2,BW,BH,v=>{autoSail=v;if(!v)autoCruise=false;},'14px'));
   }
 
   function buildJet(){
-    // Left: up/down top row, left/right bottom row
-    jetBtns.push(kBtnT('▲','KeyW',   '2%',R1,'19vw','44%','26px'));
-    jetBtns.push(kBtnT('▼','KeyS',  '23%',R1,'19vw','44%','26px'));
-    jetBtns.push(kBtnT('◀','KeyA',   '2%',R2,'19vw','44%','26px'));
-    jetBtns.push(kBtnT('▶','KeyD',  '23%',R2,'19vw','44%','26px'));
-    // Right: fire top-left, missile top-right, boost bottom-left, auto bottom-right
-    jetBtns.push(kBtnT('🔥','Space', '56%',R1,'19vw','44%','24px'));
-    jetBtns.push(kBtnT('🚀','KeyE',  '77%',R1,'19vw','44%','24px'));
-    jetBtns.push(kBtnT('⚡','ShiftLeft','56%',R2,'19vw','44%','24px'));
-    jetBtns.push(tBtnT('🤖<br>AUTO','77%',R2,'19vw','44%',v=>{autoJetMode=v;},'12px'));
+    // SIDE-SCROLL JET: W=climb, S=dive, D=throttle-up, A=throttle-down
+    //                  Space=guns, KeyE=missile, Shift=afterburner
+    jetBtns.push(kBtnT('▲<br><small>CLIMB</small>','KeyW',  C1,R1,BW,BH,'16px'));
+    jetBtns.push(kBtnT('▼<br><small>DIVE</small>', 'KeyS',  C1,R2,BW,BH,'16px'));
+    jetBtns.push(kBtnT('▶<br><small>THRTL+</small>','KeyD', C2,R1,BW,BH,'16px'));
+    jetBtns.push(kBtnT('◀<br><small>THRTL-</small>','KeyA', C2,R2,BW,BH,'16px'));
+    jetBtns.push(kBtnT('🔥<br><small>FIRE</small>', 'Space', C3,R1,BW,BH,'20px'));
+    jetBtns.push(kBtnT('🚀<br><small>MISS</small>', 'KeyE',  C3,R2,BW,BH,'20px'));
+    jetBtns.push(kBtnT('⚡<br><small>BURN</small>','ShiftLeft',C4,R1,BW,BH,'20px'));
+    jetBtns.push(tBtnT('🤖<br><small>AUTO</small>', C4,R2,BW,BH,v=>{autoJetMode=v;},'14px'));
   }
 
   function buildTD(){
-    tdBtns.push(kBtnT('▲','KeyW',   '2%',R1,'19vw','44%','26px'));
-    tdBtns.push(kBtnT('▼','KeyS',  '23%',R1,'19vw','44%','26px'));
-    tdBtns.push(kBtnT('◀','KeyA',   '2%',R2,'19vw','44%','26px'));
-    tdBtns.push(kBtnT('▶','KeyD',  '23%',R2,'19vw','44%','26px'));
-    tdBtns.push(kBtnT('🔫','Space', '56%',R1,'19vw','44%','24px'));
-    tdBtns.push(kBtnT('🚀','KeyE',  '77%',R1,'19vw','44%','24px'));
-    tdBtns.push(kBtnT('⚡','ShiftLeft','56%',R2,'19vw','44%','24px'));
-    tdBtns.push(kBtnT('⚙️','KeyG',  '77%',R2,'19vw','44%','20px'));
+    // TOP-DOWN: A=turn-left, D=turn-right, W=throttle-up, S=throttle-down
+    //           Space=guns, KeyE=missile, Shift=boost
+    tdBtns.push(kBtnT('▲<br><small>SPEED+</small>','KeyW', C1,R1,BW,BH,'16px'));
+    tdBtns.push(kBtnT('▼<br><small>SPEED-</small>','KeyS', C1,R2,BW,BH,'16px'));
+    tdBtns.push(kBtnT('◀<br><small>TURN L</small>','KeyA', C2,R1,BW,BH,'16px'));
+    tdBtns.push(kBtnT('▶<br><small>TURN R</small>','KeyD', C2,R2,BW,BH,'16px'));
+    tdBtns.push(kBtnT('🔫<br><small>FIRE</small>', 'Space', C3,R1,BW,BH,'20px'));
+    tdBtns.push(kBtnT('🚀<br><small>MISS</small>', 'KeyE',  C3,R2,BW,BH,'20px'));
+    tdBtns.push(kBtnT('⚡<br><small>BOOST</small>','ShiftLeft',C4,R1,BW,BH,'20px'));
+    tdBtns.push(tBtnT('🤖<br><small>AUTO</small>', C4,R2,BW,BH,v=>{autoJetMode=v;},'14px'));
   }
 
   function showMode(mode){
