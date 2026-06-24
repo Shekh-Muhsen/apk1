@@ -3100,135 +3100,181 @@ function applyAutoJet(dt){
 // MOBILE TOUCH CONTROLS  (mode-aware buttons + AUTO + MUSIC)
 // ══════════════════════════════════════════════════════════
 (function setupTouch(){
-  const BS='position:absolute;display:flex;align-items:center;justify-content:center;border-radius:14px;color:#fff;font-weight:bold;pointer-events:all;touch-action:none;-webkit-tap-highlight-color:transparent;border:2px solid rgba(255,255,255,0.38);';
-  const BG='rgba(255,255,255,0.17)', BGA='rgba(255,255,255,0.42)';
+  // ── Shared styles ──
+  const BG='rgba(30,30,60,0.55)', BGA='rgba(80,180,255,0.70)', BGT='rgba(0,180,80,0.72)';
+  const BASE='position:absolute;display:flex;flex-direction:column;align-items:center;justify-content:center;'
+            +'border-radius:16px;color:#fff;font-weight:bold;touch-action:none;user-select:none;'
+            +'-webkit-tap-highlight-color:transparent;border:2px solid rgba(255,255,255,0.35);box-sizing:border-box;';
 
+  // ── Pad covers bottom 46% of screen ──
   const pad=document.createElement('div');
-  pad.style.cssText='position:fixed;bottom:0;left:0;width:100%;height:44%;pointer-events:none;z-index:999;display:none;user-select:none;';
+  pad.style.cssText='position:fixed;bottom:0;left:0;width:100%;height:46%;z-index:9999;display:none;'
+                   +'touch-action:none;user-select:none;pointer-events:none;';
   document.body.appendChild(pad);
 
-  // ── Key-hold button ──
-  function kBtn(html,code,l,b,w,h,fs){
+  // ── Button registry: each entry = {el, code, toggle, onToggle, on} ──
+  const registry=[];
+  // Map: touchId → Set of button indices currently pressed by that finger
+  const touchMap={};
+
+  function makeBtn(html, code, l, t, w, h, fs, isToggle, onToggle){
     const el=document.createElement('div');
     el.innerHTML=html;
-    el.style.cssText=BS+`left:${l};bottom:${b};width:${w};height:${h};font-size:${fs||'22px'};background:${BG};`;
-    const dn=e=>{e.preventDefault();keys[code]=true;el.style.background=BGA;};
-    const up=e=>{e.preventDefault();keys[code]=false;el.style.background=BG;};
-    el.addEventListener('touchstart',dn,{passive:false});
-    el.addEventListener('touchend',up,{passive:false});
-    el.addEventListener('touchcancel',up,{passive:false});
-    pad.appendChild(el); return el;
+    el.style.cssText=BASE+`left:${l};top:${t};width:${w};height:${h};font-size:${fs||'15px'};background:${BG};pointer-events:none;`;
+    el.dataset.bidx=registry.length;
+    registry.push({el, code, isToggle, onToggle, on:false});
+    pad.appendChild(el);
+    return el;
   }
 
-  // ── Toggle button (no key, calls callback) ──
-  function tBtn(html,l,b,w,h,onToggle,fs){
-    const el=document.createElement('div');
-    el.innerHTML=html; let on=false;
-    el.style.cssText=BS+`left:${l};bottom:${b};width:${w};height:${h};font-size:${fs||'13px'};background:${BG};flex-direction:column;`;
-    el.addEventListener('touchstart',e=>{
-      e.preventDefault(); on=!on;
-      el.style.background=on?'rgba(0,200,100,0.55)':BG;
-      onToggle(on);
-    },{passive:false});
-    pad.appendChild(el); return el;
+  // ── Global multi-touch handler on the pad ──
+  function btnAtPoint(x,y){
+    // find which registered button contains this screen point
+    for(let i=0;i<registry.length;i++){
+      const r=registry[i].el.getBoundingClientRect();
+      if(x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom) return i;
+    }
+    return -1;
   }
 
-  // ── Top-positioned variants (use top: instead of bottom:) ──
-  function kBtnT(html,code,l,t,w,h,fs){
-    const el=document.createElement('div');
-    el.innerHTML=html;
-    el.style.cssText=BS+`left:${l};top:${t};width:${w};height:${h};font-size:${fs||'22px'};background:${BG};`;
-    const dn=e=>{e.preventDefault();keys[code]=true;el.style.background=BGA;};
-    const up=e=>{e.preventDefault();keys[code]=false;el.style.background=BG;};
-    el.addEventListener('touchstart',dn,{passive:false});
-    el.addEventListener('touchend',up,{passive:false});
-    el.addEventListener('touchcancel',up,{passive:false});
-    pad.appendChild(el); return el;
+  function pressBtn(idx){
+    if(idx<0)return;
+    const b=registry[idx];
+    if(b.isToggle){
+      b.on=!b.on;
+      b.el.style.background=b.on?BGT:BG;
+      b.onToggle&&b.onToggle(b.on);
+    } else {
+      keys[b.code]=true;
+      b.el.style.background=BGA;
+    }
   }
-  function tBtnT(html,l,t,w,h,onToggle,fs){
-    const el=document.createElement('div');
-    el.innerHTML=html; let on=false;
-    el.style.cssText=BS+`left:${l};top:${t};width:${w};height:${h};font-size:${fs||'13px'};background:${BG};flex-direction:column;`;
-    el.addEventListener('touchstart',e=>{
-      e.preventDefault(); on=!on;
-      el.style.background=on?'rgba(0,200,100,0.55)':BG;
-      onToggle(on);
-    },{passive:false});
-    pad.appendChild(el); return el;
+  function releaseBtn(idx){
+    if(idx<0)return;
+    const b=registry[idx];
+    if(!b.isToggle){
+      keys[b.code]=false;
+      b.el.style.background=BG;
+    }
   }
 
-  // ── Music mute toggle (top-right corner, always visible in-game) ──
+  pad.style.pointerEvents='all';
+  pad.addEventListener('touchstart',e=>{
+    e.preventDefault();
+    for(const t of e.changedTouches){
+      const idx=btnAtPoint(t.clientX,t.clientY);
+      touchMap[t.identifier]=idx;
+      pressBtn(idx);
+    }
+  },{passive:false});
+
+  pad.addEventListener('touchmove',e=>{
+    e.preventDefault();
+    for(const t of e.changedTouches){
+      const newIdx=btnAtPoint(t.clientX,t.clientY);
+      const oldIdx=touchMap[t.identifier]??-1;
+      if(newIdx!==oldIdx){
+        releaseBtn(oldIdx);
+        touchMap[t.identifier]=newIdx;
+        pressBtn(newIdx);
+      }
+    }
+  },{passive:false});
+
+  pad.addEventListener('touchend',e=>{
+    e.preventDefault();
+    for(const t of e.changedTouches){
+      releaseBtn(touchMap[t.identifier]??-1);
+      delete touchMap[t.identifier];
+    }
+  },{passive:false});
+
+  pad.addEventListener('touchcancel',e=>{
+    e.preventDefault();
+    for(const t of e.changedTouches){
+      releaseBtn(touchMap[t.identifier]??-1);
+      delete touchMap[t.identifier];
+    }
+  },{passive:false});
+
+  // ── Music mute (fixed top-right, separate from pad) ──
   const muteBtn=document.createElement('div');
   muteBtn.innerHTML='🔊'; let muted=false;
-  muteBtn.style.cssText=BS+`right:3%;top:6%;width:12vw;height:12vw;font-size:22px;background:rgba(0,0,0,0.35);border-color:rgba(255,255,255,0.3);`;
+  muteBtn.style.cssText='position:fixed;right:3%;top:3%;width:13vw;height:13vw;z-index:10000;'
+    +'display:none;align-items:center;justify-content:center;font-size:24px;'
+    +'border-radius:50%;background:rgba(0,0,0,0.45);border:2px solid rgba(255,255,255,0.4);'
+    +'touch-action:none;user-select:none;-webkit-tap-highlight-color:transparent;';
   muteBtn.addEventListener('touchstart',e=>{
     e.preventDefault(); muted=!muted; Music.setMute(muted);
     muteBtn.innerHTML=muted?'🔇':'🔊';
   },{passive:false});
-  muteBtn.style.display='none'; document.body.appendChild(muteBtn);
+  document.body.appendChild(muteBtn);
 
-  // ── Build per-mode button sets ──
-  // Layout: pad is position:fixed bottom:0, height:44vh
-  // 2 rows × 4 cols. Each btn = 22vw wide, 44% tall, 2% gap
-  // Cols: L1=2% L2=26% L3=54% L4=78%
-  // Rows: R1=top:2%  R2=top:54%
-  let yachtBtns=[], jetBtns=[], tdBtns=[];
-  const C1='2%',C2='26%',C3='54%',C4='78%';
-  const R1='2%',R2='54%';
-  const BW='22vw', BH='44%';
+  // ── Button layout helpers ──
+  // 2 rows × 4 cols inside the pad
+  // Cols at 1%, 26%, 51%, 76%   Width=22vw   Height=46%   Gaps=2%
+  const C1='1%',C2='26%',C3='51%',C4='76%';
+  const RR1='2%',RR2='54%';   // row top positions
+  const BW='22vw', BH='46%';
+  function kb(html,code,c,r,fs){ makeBtn(html,code,c,r,BW,BH,fs,false,null); }
+  function tb(html,c,r,cb,fs)  { makeBtn(html,null,c,r,BW,BH,fs,true,cb); }
 
-  function buildYacht(){
-    // YACHT: W=lean-bow-up, S=lean-bow-down, D=throttle-fwd, A=throttle-rev, Shift=boost
-    // Left pair: lean controls
-    // Right pair: throttle controls
-    // Far right: boost + auto
-    yachtBtns.push(kBtnT('▲<br><small>LEAN↑</small>','KeyW', C1,R1,BW,BH,'16px'));
-    yachtBtns.push(kBtnT('▼<br><small>LEAN↓</small>','KeyS', C1,R2,BW,BH,'16px'));
-    yachtBtns.push(kBtnT('⛵<br><small>FWD</small>',  'KeyD', C2,R1,BW,BH,'16px'));
-    yachtBtns.push(kBtnT('🔙<br><small>REV</small>',  'KeyA', C2,R2,BW,BH,'16px'));
-    yachtBtns.push(kBtnT('💨<br><small>BOOST</small>','ShiftLeft',C3,R1,BW,BH,'16px'));
-    yachtBtns.push(tBtnT('⚓<br><small>AUTO</small>',  C3,R2,BW,BH,v=>{autoSail=v;if(!v)autoCruise=false;},'14px'));
-  }
+  // ── Track which buttons belong to each mode ──
+  let modeSlices={yacht:[],jet:[],topdown:[]};
+  function startMode(m){ modeSlices[m]=[registry.length]; }
+  function endMode(m)  { modeSlices[m].push(registry.length); }
 
-  function buildJet(){
-    // SIDE-SCROLL JET: W=climb, S=dive, D=throttle-up, A=throttle-down
-    //                  Space=guns, KeyE=missile, Shift=afterburner
-    jetBtns.push(kBtnT('▲<br><small>CLIMB</small>','KeyW',  C1,R1,BW,BH,'16px'));
-    jetBtns.push(kBtnT('▼<br><small>DIVE</small>', 'KeyS',  C1,R2,BW,BH,'16px'));
-    jetBtns.push(kBtnT('▶<br><small>THRTL+</small>','KeyD', C2,R1,BW,BH,'16px'));
-    jetBtns.push(kBtnT('◀<br><small>THRTL-</small>','KeyA', C2,R2,BW,BH,'16px'));
-    jetBtns.push(kBtnT('🔥<br><small>FIRE</small>', 'Space', C3,R1,BW,BH,'20px'));
-    jetBtns.push(kBtnT('🚀<br><small>MISS</small>', 'KeyE',  C3,R2,BW,BH,'20px'));
-    jetBtns.push(kBtnT('⚡<br><small>BURN</small>','ShiftLeft',C4,R1,BW,BH,'20px'));
-    jetBtns.push(tBtnT('🤖<br><small>AUTO</small>', C4,R2,BW,BH,v=>{autoJetMode=v;},'14px'));
-  }
+  // ── YACHT: W=lean↑  S=lean↓  D=fwd  A=rev  Shift=boost ──
+  startMode('yacht');
+  kb('▲<br><small>LEAN</small>',  'KeyW',      C1,RR1,'15px');
+  kb('▼<br><small>LEAN</small>',  'KeyS',      C1,RR2,'15px');
+  kb('⛵<br><small>FWD</small>',  'KeyD',      C2,RR1,'15px');
+  kb('↩<br><small>REV</small>',   'KeyA',      C2,RR2,'15px');
+  kb('💨<br><small>BOOST</small>','ShiftLeft', C3,RR1,'15px');
+  tb('⚓<br><small>AUTO</small>',  C3,RR2,v=>{autoSail=v;if(!v)autoCruise=false;},'13px');
+  endMode('yacht');
 
-  function buildTD(){
-    // TOP-DOWN: A=turn-left, D=turn-right, W=throttle-up, S=throttle-down
-    //           Space=guns, KeyE=missile, Shift=boost
-    tdBtns.push(kBtnT('▲<br><small>SPEED+</small>','KeyW', C1,R1,BW,BH,'16px'));
-    tdBtns.push(kBtnT('▼<br><small>SPEED-</small>','KeyS', C1,R2,BW,BH,'16px'));
-    tdBtns.push(kBtnT('◀<br><small>TURN L</small>','KeyA', C2,R1,BW,BH,'16px'));
-    tdBtns.push(kBtnT('▶<br><small>TURN R</small>','KeyD', C2,R2,BW,BH,'16px'));
-    tdBtns.push(kBtnT('🔫<br><small>FIRE</small>', 'Space', C3,R1,BW,BH,'20px'));
-    tdBtns.push(kBtnT('🚀<br><small>MISS</small>', 'KeyE',  C3,R2,BW,BH,'20px'));
-    tdBtns.push(kBtnT('⚡<br><small>BOOST</small>','ShiftLeft',C4,R1,BW,BH,'20px'));
-    tdBtns.push(tBtnT('🤖<br><small>AUTO</small>', C4,R2,BW,BH,v=>{autoJetMode=v;},'14px'));
-  }
+  // ── JET (side-scroll): W=climb  S=dive  D=throttle+  A=throttle-  Space=fire  KeyE=missile  Shift=afterburner ──
+  startMode('jet');
+  kb('▲<br><small>CLIMB</small>', 'KeyW',      C1,RR1,'15px');
+  kb('▼<br><small>DIVE</small>',  'KeyS',      C1,RR2,'15px');
+  kb('▶<br><small>THRTL+</small>','KeyD',      C2,RR1,'15px');
+  kb('◀<br><small>THRTL-</small>','KeyA',      C2,RR2,'15px');
+  kb('🔥<br><small>FIRE</small>', 'Space',     C3,RR1,'19px');
+  kb('🚀<br><small>MISS</small>', 'KeyE',      C3,RR2,'19px');
+  kb('⚡<br><small>BURN</small>', 'ShiftLeft', C4,RR1,'19px');
+  tb('🤖<br><small>AUTO</small>',  C4,RR2,v=>{autoJetMode=v;},'13px');
+  endMode('jet');
+
+  // ── TOP-DOWN: A=turn-L  D=turn-R  W=speed+  S=speed-  Space=guns  KeyE=missile  Shift=boost ──
+  startMode('topdown');
+  kb('▲<br><small>SPEED+</small>','KeyW',      C1,RR1,'15px');
+  kb('▼<br><small>SPEED-</small>','KeyS',      C1,RR2,'15px');
+  kb('◀<br><small>TURN L</small>','KeyA',      C2,RR1,'15px');
+  kb('▶<br><small>TURN R</small>','KeyD',      C2,RR2,'15px');
+  kb('🔫<br><small>FIRE</small>', 'Space',     C3,RR1,'19px');
+  kb('🚀<br><small>MISS</small>', 'KeyE',      C3,RR2,'19px');
+  kb('⚡<br><small>BOOST</small>','ShiftLeft', C4,RR1,'19px');
+  tb('🤖<br><small>AUTO</small>',  C4,RR2,v=>{autoJetMode=v;},'13px');
+  endMode('topdown');
 
   function showMode(mode){
-    [...yachtBtns,...jetBtns,...tdBtns].forEach(b=>b.style.display='none');
-    if(mode==='yacht') yachtBtns.forEach(b=>b.style.display='flex');
-    else if(mode==='jet') jetBtns.forEach(b=>b.style.display='flex');
-    else if(mode==='topdown') tdBtns.forEach(b=>b.style.display='flex');
-    pad.style.display='block'; muteBtn.style.display='flex';
-    // Start music
+    // Hide all buttons
+    registry.forEach(b=>b.el.style.display='none');
+    // Release all keys from previous mode
+    registry.forEach(b=>{ if(b.code) keys[b.code]=false; });
+    Object.keys(touchMap).forEach(k=>delete touchMap[k]);
+    // Show buttons for this mode
+    const sl=modeSlices[mode];
+    if(sl&&sl.length===2){
+      for(let i=sl[0];i<sl[1];i++) registry[i].el.style.display='flex';
+    }
+    pad.style.display='block';
+    muteBtn.style.display='flex';
     if(mode==='yacht') Music.ocean();
     else if(mode==='jet') Music.jet();
     else if(mode==='topdown') Music.topdown();
   }
-
-  buildYacht(); buildJet(); buildTD();
 
   // Hook into startGame
   const orig=window.startGame;
