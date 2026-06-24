@@ -3027,25 +3027,45 @@ const Music=(function(){
     o.type=type;o.frequency.value=freq;g.gain.value=vol;
     o.connect(g);g.connect(dest||master);o.start();nodes.push(o);return{o,g};
   }
-  function stop(){nodes.forEach(n=>{try{n.stop();}catch(e){}});nodes=[];if(timer){clearInterval(timer);timer=null;}}
+  function stop(){nodes.forEach(n=>{try{n.stop();}catch(e){}});nodes=[];if(timer){clearInterval(timer);clearTimeout(timer);timer=null;}}
   function ocean(){
     stop();const c=ctx();
-    const d=mkOsc('sine',55,0.30);
-    mkOsc('sine',110,0.10);
-    const lfo=mkOsc('sine',0.11,0);
-    lfo.g.gain.value=0;
-    const lfoG=c.createGain();lfoG.gain.value=3.5;lfo.o.connect(lfoG);lfoG.connect(d.o.frequency);
-    lfo.o.start&&0; // already started
-    const bellFreqs=[330,392,440,523,659,784];
-    timer=setInterval(()=>{
-      if(!gameRunning||muted)return;
-      const c2=ctx(),f=bellFreqs[Math.random()*bellFreqs.length|0];
+    // Deep bass pad: D2 root + A2 fifth + D3 octave (sine+triangle blend)
+    const bass=mkOsc('sine',48,0.22);
+    mkOsc('triangle',72,0.09);
+    mkOsc('triangle',96,0.05);
+    mkOsc('triangle',192,0.022);
+    // Slow breathing swell ~0.09 Hz wobbles bass pitch ±1.8 Hz
+    const swellLfo=c.createOscillator();swellLfo.type='sine';swellLfo.frequency.value=0.09;swellLfo.start();nodes.push(swellLfo);
+    const swellAmt=c.createGain();swellAmt.gain.value=1.8;
+    swellLfo.connect(swellAmt);swellAmt.connect(bass.o.frequency);
+    // Crystal shimmer: 528 Hz triangle + ultra-slow gain pulse
+    const shimG=c.createGain();shimG.gain.value=0.018;shimG.connect(master);
+    const shim=c.createOscillator();shim.type='triangle';shim.frequency.value=528;shim.start();nodes.push(shim);shim.connect(shimG);
+    const shimLfo=c.createOscillator();shimLfo.type='sine';shimLfo.frequency.value=0.20;shimLfo.start();nodes.push(shimLfo);
+    const shimMod=c.createGain();shimMod.gain.value=0.014;shimLfo.connect(shimMod);shimMod.connect(shimG.gain);
+    // Pentatonic bells: C-major pentatonic, 4 s decay
+    const pent=[261.6,293.7,329.6,392.0,440.0,523.3,659.3,784.0,880.0];
+    let bellIdx=0;
+    function ringBell(){
+      if(!gameRunning||muted){timer=setTimeout(ringBell,2400+Math.random()*2000);return;}
+      const c2=ctx();const t=c2.currentTime;
+      const f=pent[bellIdx++%pent.length];
       const b=c2.createOscillator(),bg=c2.createGain();
-      b.type='sine';b.frequency.value=f;
-      bg.gain.setValueAtTime(0.09,c2.currentTime);
-      bg.gain.exponentialRampToValueAtTime(0.001,c2.currentTime+2.2);
-      b.connect(bg);bg.connect(master);b.start();b.stop(c2.currentTime+2.2);
-    },2600+Math.random()*1200);
+      b.type='triangle';b.frequency.value=f;
+      bg.gain.setValueAtTime(0.10,t);
+      bg.gain.exponentialRampToValueAtTime(0.0008,t+4.0);
+      b.connect(bg);bg.connect(master);b.start(t);b.stop(t+4.1);
+      if(Math.random()<0.35){
+        const h=c2.createOscillator(),hg=c2.createGain();
+        h.type='sine';h.frequency.value=f*1.5;
+        hg.gain.setValueAtTime(0.048,t+0.04);
+        hg.gain.exponentialRampToValueAtTime(0.0008,t+3.2);
+        h.connect(hg);hg.connect(master);h.start(t+0.04);h.stop(t+3.3);
+      }
+      timer=setTimeout(ringBell,2200+Math.random()*2000);
+    }
+    timer=setTimeout(ringBell,800);
   }
   function jetMusic(){
     stop();const c=ctx();
@@ -3107,7 +3127,7 @@ function applyAutoJet(dt){
 
   // ── Pad covers bottom 46% of screen ──
   const pad=document.createElement('div');
-  pad.style.cssText='position:fixed;bottom:0;left:0;width:100%;height:46%;z-index:9999;display:none;'
+  pad.style.cssText='position:fixed;bottom:0;left:0;width:100%;height:26%;z-index:9999;display:none;'
                    +'touch-action:none;user-select:none;pointer-events:none;';
   document.body.appendChild(pad);
 
@@ -3210,13 +3230,12 @@ function applyAutoJet(dt){
   document.body.appendChild(muteBtn);
 
   // ── Button layout helpers ──
-  // 2 rows × 4 cols inside the pad
-  // Cols at 1%, 26%, 51%, 76%   Width=22vw   Height=46%   Gaps=2%
+  // 2 rows × 4 cols inside the pad (compact — pad is 26% of screen height)
   const C1='1%',C2='26%',C3='51%',C4='76%';
-  const RR1='2%',RR2='54%';   // row top positions
-  const BW='22vw', BH='46%';
-  function kb(html,code,c,r,fs){ makeBtn(html,code,c,r,BW,BH,fs,false,null); }
-  function tb(html,c,r,cb,fs)  { makeBtn(html,null,c,r,BW,BH,fs,true,cb); }
+  const RR1='3%',RR2='52%';   // row top positions within pad
+  const BW='22vw', BH='44%';
+  function kb(html,code,c,r,fs){ makeBtn(html,code,c,r,BW,BH,fs||'12px',false,null); }
+  function tb(html,c,r,cb,fs)  { makeBtn(html,null,c,r,BW,BH,fs||'11px',true,cb); }
 
   // ── Track which buttons belong to each mode ──
   let modeSlices={yacht:[],jet:[],topdown:[]};
