@@ -2610,6 +2610,7 @@ let tdEnemies=[], tdBullets=[], tdMissiles2=[], tdBlasts=[];
 let tdSAMs=[], tdSAMmissiles=[], tdAirBlasts=[], tdGroundBlasts=[];
 let tdLockAnim=0;
 let tdTouchTarget=null;
+let tdCam={lat:TD_HOME.lat,lng:TD_HOME.lng};
 
 const TD_SAM_SITES=[
   {lat:23.97,lng:90.38},{lat:23.80,lng:90.50},{lat:23.74,lng:90.29},
@@ -2628,6 +2629,9 @@ function tdToScreen(lat,lng){
   if(!tdMap) return null;
   const p=tdMap.latLngToContainerPoint([lat,lng]);
   return {x:p.x,y:p.y};
+}
+function tdPlayerScreen(){
+  return tdToScreen(tdPlayer.lat,tdPlayer.lng)||{x:W/2,y:H/2};
 }
 
 function spawnAirBlast(lat,lng){
@@ -2664,7 +2668,8 @@ function updateTopdown(dt){
 
   const turnRate=110+tdPlayer.throttle*90;   // 110–200°/s
   if(tdTouchTarget){
-    const dx=tdTouchTarget.sx-W/2, dy=tdTouchTarget.sy-H/2;
+    const ps=tdPlayerScreen();
+    const dx=tdTouchTarget.sx-ps.x, dy=tdTouchTarget.sy-ps.y;
     if(Math.hypot(dx,dy)>18){
       const targetHdg=(Math.atan2(dx,-dy)*180/Math.PI+360)%360;
       let diff=((targetHdg-tdPlayer.hdg+540)%360)-180;
@@ -2685,7 +2690,15 @@ function updateTopdown(dt){
   tdPlayer.lat+=Math.cos(hdR)*knotsToLat(tdPlayer.speed)*dt;
   tdPlayer.lng+=Math.sin(hdR)*knotsToLng(tdPlayer.speed,tdPlayer.lat)*dt;
 
-  if(tdMap) tdMap.setView([tdPlayer.lat,tdPlayer.lng],tdMap.getZoom(),{animate:false,duration:0});
+  if(tdMap){
+    const lead=1.15+tdPlayer.throttle*0.55;
+    const camTargetLat=tdPlayer.lat+Math.cos(hdR)*knotsToLat(tdPlayer.speed)*lead;
+    const camTargetLng=tdPlayer.lng+Math.sin(hdR)*knotsToLng(tdPlayer.speed,tdPlayer.lat)*lead;
+    const follow=Math.min(1,dt*1.45);
+    tdCam.lat+=(camTargetLat-tdCam.lat)*follow;
+    tdCam.lng+=(camTargetLng-tdCam.lng)*follow;
+    tdMap.setView([tdCam.lat,tdCam.lng],tdMap.getZoom(),{animate:false,duration:0});
+  }
 
   // ── Fire guns — 5-bullet spread cone ──
   tdPlayer.fireTimer=Math.max(0,tdPlayer.fireTimer-dt);
@@ -2894,6 +2907,7 @@ function renderTopdown(){
   ctx.fillStyle=vgB; ctx.fillRect(0,H-skH,W,skH);
 
   if(!tdMap) return;
+  const playerPt=tdPlayerScreen();
 
   // Airports
   for(const ap of TD_AIRPORTS){
@@ -3008,7 +3022,7 @@ function renderTopdown(){
     if(offscreen){
       ctx.save();
       ctx.translate(edgeX,edgeY);
-      ctx.rotate(Math.atan2(rawMp.y-H/2,rawMp.x-W/2));
+      ctx.rotate(Math.atan2(rawMp.y-playerPt.y,rawMp.x-playerPt.x));
       ctx.fillStyle='rgba(255,32,20,0.92)';
       ctx.beginPath();
       ctx.moveTo(18,0); ctx.lineTo(-11,-10); ctx.lineTo(-6,0); ctx.lineTo(-11,10);
@@ -3095,11 +3109,11 @@ function renderTopdown(){
   if(tdPlayer.health>0){
     const hn=tdPlayer.hdg*Math.PI/180;
     const aLen=180+tdPlayer.speed*0.22;
-    const ax=W/2+Math.sin(hn)*aLen, ay=H/2-Math.cos(hn)*aLen;
+    const ax=playerPt.x+Math.sin(hn)*aLen, ay=playerPt.y-Math.cos(hn)*aLen;
     // Dashed aim line
     ctx.save(); ctx.setLineDash([6,8]); ctx.lineDashOffset=-(tdTime2*60%14);
     ctx.strokeStyle='rgba(255,255,80,0.35)'; ctx.lineWidth=1.5;
-    ctx.beginPath(); ctx.moveTo(W/2,H/2); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(playerPt.x,playerPt.y); ctx.lineTo(ax,ay); ctx.stroke();
     ctx.restore();
     // Small diamond at tip
     ctx.save(); ctx.translate(ax,ay); ctx.rotate(Math.PI/4);
@@ -3111,7 +3125,7 @@ function renderTopdown(){
     ctx.globalAlpha=0.78;
     ctx.strokeStyle='#4ef'; ctx.lineWidth=2;
     ctx.beginPath(); ctx.arc(tdTouchTarget.sx,tdTouchTarget.sy,18,0,6.283); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(W/2,H/2); ctx.lineTo(tdTouchTarget.sx,tdTouchTarget.sy);
+    ctx.beginPath(); ctx.moveTo(playerPt.x,playerPt.y); ctx.lineTo(tdTouchTarget.sx,tdTouchTarget.sy);
     ctx.strokeStyle='rgba(80,240,255,0.32)'; ctx.stroke();
     ctx.beginPath();
     ctx.moveTo(tdTouchTarget.sx-26,tdTouchTarget.sy); ctx.lineTo(tdTouchTarget.sx-8,tdTouchTarget.sy);
@@ -3121,8 +3135,8 @@ function renderTopdown(){
     ctx.strokeStyle='#4ef'; ctx.stroke();
     ctx.restore();
   }
-  // Player jet (centre screen)
-  ctx.save(); ctx.translate(W/2,H/2); ctx.rotate(tdPlayer.hdg*Math.PI/180);
+  // Player jet (real aircraft screen position; camera follows with lag)
+  ctx.save(); ctx.translate(playerPt.x,playerPt.y); ctx.rotate(tdPlayer.hdg*Math.PI/180);
   // Shadow
   ctx.save(); ctx.globalAlpha=0.22; ctx.scale(1.1,1.1); ctx.translate(5,5);
   ctx.fillStyle='#000'; ctx.beginPath(); ctx.ellipse(0,0,8,22,0,0,6.283); ctx.fill();
@@ -3397,8 +3411,8 @@ function drawTopdownHUD(){
     ctx.globalAlpha=Math.min(1,(16-tdTime2)/4);
     ctx.fillStyle='rgba(0,8,24,0.7)'; tdRR(ctx,W/2-210,H-100,420,60,8); ctx.fill();
     ctx.fillStyle='#8abed8'; ctx.font='11px monospace'; ctx.textAlign='center';
-    ctx.fillText('DRAG — Steer with finger  ·  W — Accelerate  ·  S — Brake  ·  SHIFT — Boost',W/2,H-80);
-    ctx.fillText('SPACE — Guns  ·  E — Missile  ·  Watch red edge arrows for incoming SAMs',W/2,H-60);
+    ctx.fillText('DRAG NEAR THE JET — real flight steering  ·  W/S — throttle  ·  SHIFT — boost',W/2,H-80);
+    ctx.fillText('The jet moves on screen while the satellite map follows behind',W/2,H-60);
     ctx.globalAlpha=1;
   }
   ctx.textAlign='left'; ctx.textBaseline='alphabetic';
@@ -3415,6 +3429,7 @@ function tdHexBtn(x,y,r,icon,lbl){
 function initTopdownGame(){
   syncSize();
   Object.assign(tdPlayer,{lat:TD_HOME.lat,lng:TD_HOME.lng,hdg:0,speed:200,alt:8000,gear:false,throttle:0.7,health:100,missiles:6,fireTimer:0,missileTimer:0,locked:null,landed:false,landTimer:0});
+  tdCam.lat=TD_HOME.lat; tdCam.lng=TD_HOME.lng;
   tdScore=0; tdTime2=0; tdSpawnTimer=5; tdLockTimer=0; tdLockAnim=0;
   tdTouchTarget=null;
   tdEnemies.length=0; tdBullets.length=0; tdMissiles2.length=0; tdBlasts.length=0;
@@ -3429,7 +3444,7 @@ function initTopdownGame(){
     tdMap=L.map('td-map',{center:[TD_HOME.lat,TD_HOME.lng],zoom:13,zoomControl:false,attributionControl:false,dragging:false,scrollWheelZoom:false,doubleClickZoom:false,keyboard:false,touchZoom:false,boxZoom:false});
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:''}).addTo(tdMap);
   } else {
-    tdMap.setView([TD_HOME.lat,TD_HOME.lng],13,{animate:false});
+    tdMap.setView([tdCam.lat,tdCam.lng],13,{animate:false});
   }
   notify('🎯 J-10C Sky Combat — Dhaka! A/D=Turn W=Accel S=Brake SPACE=Guns E=Missile');
   requestAnimationFrame(gameLoop);
