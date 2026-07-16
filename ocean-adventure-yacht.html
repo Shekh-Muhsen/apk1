@@ -2632,7 +2632,7 @@ function tdToScreen(lat,lng){
   return {x:p.x,y:p.y};
 }
 function tdPlayerScreen(){
-  return tdToScreen(tdPlayer.lat,tdPlayer.lng)||{x:W/2,y:H/2};
+  return {x:tdPilotScreen.x||W/2,y:tdPilotScreen.y||H*0.56};
 }
 function tdClampPilotPoint(x,y){
   return {
@@ -2717,9 +2717,11 @@ function updateTopdown(dt){
   tdPlayer.lng+=Math.sin(hdR)*knotsToLng(tdPlayer.speed,tdPlayer.lat)*dt;
 
   if(tdMap){
-    const camTarget=tdCameraCenterForPlayerAt(tdPilotScreen);
-    const follow=Math.min(1,dt*7.5);
-    const camTargetLat=camTarget.lat, camTargetLng=camTarget.lng;
+    const hdR2=tdPlayer.hdg*Math.PI/180;
+    const lead=0.55+tdPlayer.throttle*0.35;
+    const camTargetLat=tdPlayer.lat+Math.cos(hdR2)*knotsToLat(tdPlayer.speed)*lead;
+    const camTargetLng=tdPlayer.lng+Math.sin(hdR2)*knotsToLng(tdPlayer.speed,tdPlayer.lat)*lead;
+    const follow=Math.min(1,dt*2.4);
     tdCam.lat+=(camTargetLat-tdCam.lat)*follow;
     tdCam.lng+=(camTargetLng-tdCam.lng)*follow;
     tdMap.setView([tdCam.lat,tdCam.lng],tdMap.getZoom(),{animate:false,duration:0});
